@@ -275,7 +275,8 @@ h1{margin:2px 0 0;font-size:clamp(28px,8vw,42px);font-weight:900;letter-spacing:
         <li><b>Move the OdorSol bottle</b> left and right along the floor.</li>
         <li><b>Spray upward</b> to zap odor clouds rising from the litter boxes before they escape into the house.</li>
         <li><b>Know your odors:</b> puffy green = normal stink, spiky yellow = fast ammonia, swirly purple = zigzagging mystery stink, big red = mega multi-cat odor (needs two hits!).</li>
-        <li><b>Don't spray the couch, carpet roll, cat toy, or food bowl</b> on the sides — OdorSol is for cat litter only, and wrong targets cost points.</li>
+        <li><b>Don't spray the couch, carpet roll, cat toy, or food bowl</b> drifting up the sides — OdorSol is for cat litter only, and wrong targets cost points.</li>
+        <li><b>Power-ups</b> (droplet burst, shield, scoop, ripple) just need your bottle to touch them as they drift by — no spraying or tapping required.</li>
         <li><b>Your cat is a friend,</b> not a target. Watch it cheer when you clear the air nearby!</li>
         <li><b>Keep Freshness above zero.</b> Escaped clouds drain the meter — at 0% it's game over.</li>
         <li><b>Catch falling power-ups:</b> OdorSol Boost, Fresh Home Shield, Scoop Bonus, and the chain-reacting Oxidation Wave.</li>
@@ -359,8 +360,9 @@ function resize() {
 }
 
 /* ---------- Room layout: recomputed on resize ----------
-   The odor "flight lane" is the middle band; furniture and other
-   no-spray objects live clearly off to the sides of it.            */
+   The odor "flight lane" is the middle band; furniture rises through
+   dedicated zones off to the sides of it (see FURN_DIMS/spawnFurniture
+   below) so it never shares horizontal space with the cloud lane.  */
 var L = {};
 function layout() {
   var floorY = H - 56;
@@ -377,18 +379,13 @@ function layout() {
   ];
   // Cat sits on the floor near the litter boxes, just OUTSIDE the lane.
   L.cat = { x: Math.min(L.laneR + 30 * s + 8, W * 0.79), y: floorY };
-  // No-spray objects: hit rectangles {x,y,w,h} + a display name.
-  var couchW = Math.max(62, Math.min(W * 0.17, 160));
-  var couchX = Math.max(6, W * 0.02);
-  var rollW = Math.max(20, Math.min(W * 0.05, 34));
-  var shelfW = Math.max(48, Math.min(W * 0.14, 86));
-  var shelfX = W - 8 - shelfW;
-  L.objects = [
-    { name: "couch",  x: couchX, y: floorY - 218 * s, w: couchW, h: 218 * s, flash: 0, cool: 0 },
-    { name: "carpet", x: couchX + couchW + 6, y: floorY - 196 * s, w: rollW, h: 196 * s, flash: 0, cool: 0 },
-    { name: "toy",    x: shelfX, y: floorY - 268 * s, w: shelfW, h: 66 * s, flash: 0, cool: 0 },
-    { name: "bowl",   x: shelfX, y: floorY - 178 * s, w: shelfW, h: 58 * s, flash: 0, cool: 0 }
-  ];
+  // Furniture spawn zones: comfortably outside the cloud lane on both
+  // sides, and the right zone additionally clears the cat so rising
+  // furniture never spawns on top of it.
+  var margin = 8;
+  L.furnZoneL = { xMin: margin, xMax: Math.max(margin + 40 * s, Math.min(W * 0.22, L.laneL - 26 * s)) };
+  var rightMin = Math.min(W - margin - 40 * s, Math.max(W * 0.78, L.cat.x + 46 * s, L.laneR + 26 * s));
+  L.furnZoneR = { xMin: rightMin, xMax: W - margin };
 }
 
 /* =====================================================================
@@ -398,14 +395,24 @@ function layout() {
    ===================================================================== */
 var audio = {
   ctx: null, master: null, noiseBuf: null, muted: false,
+  /* Must be invoked from inside a user-gesture handler (click/tap/key),
+     since browsers block audio output until one occurs. Safe to call
+     repeatedly — later calls just resume a suspended context. */
   init: function () {
-    if (this.ctx) { if (this.ctx.state === "suspended") this.ctx.resume(); return; }
+    if (this.ctx) {
+      if (this.ctx.state === "suspended") this.ctx.resume().catch(function () {});
+      return;
+    }
     try {
       var AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return;
       this.ctx = new AC();
+      // Some browsers still create a fresh AudioContext in "suspended"
+      // state even inside a gesture handler — resume it explicitly so
+      // sound isn't silently dropped on the very first interaction.
+      if (this.ctx.state === "suspended") this.ctx.resume().catch(function () {});
       this.master = this.ctx.createGain();
-      this.master.gain.value = 0.4;
+      this.master.gain.value = 0.5;
       this.master.connect(this.ctx.destination);
       // Pre-build a half-second white-noise buffer, reused for spray/hiss.
       var len = Math.floor(this.ctx.sampleRate * 0.5);
@@ -458,6 +465,31 @@ var sfx = {
 var MAX_CLOUDS = 12;      // cap simultaneous clouds (mobile frame rate)
 var MAX_MIST = 110;       // cap spray particles
 var MAX_SPARKS = 90;      // cap sparkle/heart particles
+var MAX_FURNITURE = 2;    // cap simultaneous rising furniture distractors
+
+/* Minimum required gap (px, pre-scale) between any active cloud and any
+   active rising furniture item, checked both ways at spawn time, plus a
+   minimum time gap between a cloud spawn and a furniture spawn — together
+   these keep the two families from ever spawning overlapping/stacked or
+   arriving at the same height at the same moment. */
+var MIN_GAP_X = 50;
+var MIN_GAP_Y = 60;
+var SPAWN_STAGGER = 0.5;
+
+/* Rising furniture: couch/carpet stay in the LEFT zone, toy/bowl in the
+   RIGHT zone (see layout()) — both zones sit outside the cloud lane. */
+var FURNITURE_DEFS = {
+  couch:  { side: "left" },
+  carpet: { side: "left" },
+  toy:    { side: "right" },
+  bowl:   { side: "right" }
+};
+var FURN_DIMS = {
+  couch:  { w: 46, h: 34 },
+  carpet: { w: 15, h: 46 },
+  toy:    { w: 30, h: 30 },
+  bowl:   { w: 34, h: 20 }
+};
 
 var TAGLINES = [
   "Stop litter odor at the source",
@@ -489,10 +521,11 @@ var game = {
   state: "start",          // start | playing | paused | gameover
   score: 0, fresh: 100, wave: 1,
   player: { x: 0, dir: 0, squeeze: 0 },
-  clouds: [], mists: [], sparks: [], floats: [], pups: [], ripples: [], chain: [],
+  clouds: [], mists: [], sparks: [], floats: [], pups: [], ripples: [], chain: [], furniture: [],
   toSpawn: 0, spawnT: 0, interT: 0,   // wave spawn bookkeeping
   shieldT: 0, scoopT: 0,              // timed power-ups (seconds left)
   pupT: 12, sprayCd: 0,
+  furnSpawnT: 3, lastCloudSpawnT: -99, lastFurnSpawnT: -99,  // furniture spawn bookkeeping
   time: 0, raf: 0, last: 0,
   cat: { happy: 0, cheer: 0, blink: 0, nextBlink: 3 },
   flashRed: 0, flashTeal: 0           // top-of-screen escape/shield flashes
@@ -557,19 +590,48 @@ function pickCloudType() {
   for (i = 0; i < pool.length; i++) { r -= pool[i][1]; if (r <= 0) return pool[i][0]; }
   return "green";
 }
-function spawnCloud() {
+/* ---------- Cloud <-> furniture spacing helpers ----------
+   Used both ways at spawn time so a cloud never spawns on top of a
+   furniture item and vice versa — a real, enforced gap, not just a
+   coincidence of the lane vs. side-zone layout.                     */
+function tooCloseToFurniture(cx, cy, gapX, gapY) {
+  var s = L.scale;
+  for (var i = 0; i < game.furniture.length; i++) {
+    var f = game.furniture[i], fcx = f.x + f.w / 2, fcy = f.y + f.h / 2;
+    if (Math.abs(cx - fcx) < gapX * s && Math.abs(cy - fcy) < gapY * s) return true;
+  }
+  return false;
+}
+function tooCloseToClouds(cx, cy, gapX, gapY) {
+  var s = L.scale;
+  for (var i = 0; i < game.clouds.length; i++) {
+    var c = game.clouds[i];
+    if (Math.abs(cx - c.x) < gapX * s && Math.abs(cy - c.y) < gapY * s) return true;
+  }
+  return false;
+}
+
+/* Returns true if a cloud actually spawned. Cloud spawning drives wave
+   completion, so a spacing conflict only causes a very short retry
+   (never a long stall) rather than skipping the spawn outright. */
+function trySpawnCloud() {
   var type = pickCloudType(), def = CLOUD_DEFS[type];
   var box = L.boxes[Math.floor(Math.random() * L.boxes.length)];
+  var x = box.x + rand(-14, 14);
+  var y = L.floorY - 46 - rand(0, 20);
+  if (tooCloseToFurniture(x, y, MIN_GAP_X, MIN_GAP_Y)) return false;
   var speed = (32 + game.wave * 6.5) * Math.min(1.4, H / 640) * def.speed;
   speed = Math.min(speed, 150);
   var amp = type === "purple" ? Math.min(56, box.x - L.laneL - def.r, L.laneR - box.x - def.r) : 0;
   game.clouds.push({
     type: type, def: def, hp: def.hp,
-    x: box.x + rand(-14, 14), baseX: box.x, amp: Math.max(0, amp),
-    y: L.floorY - 46 - rand(0, 20),
+    x: x, baseX: box.x, amp: Math.max(0, amp),
+    y: y,
     vy: speed, wob: rand(0, 6.28), t: 0,
     r: def.r * L.scale * (type === "red" ? 1.05 : 1)
   });
+  game.lastCloudSpawnT = game.time;
+  return true;
 }
 function spawnPowerup() {
   var types = ["boost", "shield", "scoop", "oxwave"];
@@ -578,6 +640,28 @@ function spawnPowerup() {
     x: rand(L.laneL + 30, L.laneR - 30),
     y: -24, vy: 60 * Math.min(1.3, H / 640), t: 0
   });
+}
+/* Rising furniture (couch/carpet/toy/bowl) — the only wrong-target
+   objects. Never sprayable-for-points, only a -50 penalty on contact.
+   Returns true if it actually spawned; a spacing/timing conflict with
+   an active cloud just triggers a short retry via the caller.        */
+function trySpawnFurniture() {
+  var types = Object.keys(FURNITURE_DEFS);
+  var type = types[Math.floor(Math.random() * types.length)];
+  var zone = FURNITURE_DEFS[type].side === "left" ? L.furnZoneL : L.furnZoneR;
+  var s = L.scale, dims = FURN_DIMS[type];
+  var w = dims.w * s, h = dims.h * s;
+  var x = rand(zone.xMin, Math.max(zone.xMin, zone.xMax - w));
+  var cx = x + w / 2, cy = L.floorY - h / 2;
+  if (tooCloseToClouds(cx, cy, MIN_GAP_X, MIN_GAP_Y)) return false;
+  if (game.time - game.lastCloudSpawnT < SPAWN_STAGGER) return false;
+  game.furniture.push({
+    type: type, x: x, y: L.floorY - h, w: w, h: h,
+    baseX: x, vy: rand(24, 34) * Math.min(1.3, H / 640),
+    wob: rand(0, 6.28), t: 0, cool: 0, flash: 0
+  });
+  game.lastFurnSpawnT = game.time;
+  return true;
 }
 
 /* =====================================================================
@@ -690,10 +774,13 @@ function update(dt) {
   if (game.toSpawn > 0) {
     game.spawnT -= dt * (game.scoopT > 0 ? 0.5 : 1);   // Scoop Bonus slows spawns
     if (game.spawnT <= 0 && game.clouds.length < MAX_CLOUDS) {
-      spawnCloud();
-      game.toSpawn--;
-      var base = Math.max(0.4, 1.5 - game.wave * 0.1);
-      game.spawnT = base * rand(0.7, 1.3);
+      if (trySpawnCloud()) {
+        game.toSpawn--;
+        var base = Math.max(0.4, 1.5 - game.wave * 0.1);
+        game.spawnT = base * rand(0.7, 1.3);
+      } else {
+        game.spawnT = 0.15;    // a furniture item is briefly in the way — retry almost immediately
+      }
     }
   } else if (game.clouds.length === 0) {
     /* --- wave cleared --- */
@@ -714,6 +801,25 @@ function update(dt) {
   if (game.wave >= 2) {
     game.pupT -= dt;
     if (game.pupT <= 0 && game.pups.length < 2) { spawnPowerup(); game.pupT = rand(9, 15); }
+  }
+
+  /* --- rising furniture: independent timer, spaced/staggered from clouds --- */
+  game.furnSpawnT -= dt;
+  if (game.furnSpawnT <= 0 && game.furniture.length < MAX_FURNITURE) {
+    if (trySpawnFurniture()) {
+      game.furnSpawnT = Math.max(2.2, rand(3.4, 5.6) - game.wave * 0.08);
+    } else {
+      game.furnSpawnT = 0.25;  // a cloud is briefly in the way / too soon after one spawned — retry shortly
+    }
+  }
+  for (i = game.furniture.length - 1; i >= 0; i--) {
+    var fu = game.furniture[i];
+    fu.t += dt;
+    fu.y -= fu.vy * dt;
+    fu.x = fu.baseX + Math.sin(fu.t * 1.2 + fu.wob) * 3 * s;   // gentle sway, stays in its zone
+    if (fu.cool > 0) fu.cool -= dt;
+    if (fu.flash > 0) fu.flash -= dt;
+    if (fu.y + fu.h < -20) game.furniture.splice(i, 1);        // drifts off the top — no freshness penalty, it's not an odor
   }
 
   /* --- odor clouds rise; escaped clouds drain freshness --- */
@@ -763,19 +869,14 @@ function update(dt) {
       }
     }
     if (hit) { game.mists.splice(i, 1); continue; }
-    // Misdirected spray: mist touching couch/carpet/toy/bowl costs points.
-    for (j = 0; j < L.objects.length; j++) {
-      var o = L.objects[j];
+    // Misdirected spray: mist touching the rising couch/carpet/toy/bowl costs points.
+    for (j = 0; j < game.furniture.length; j++) {
+      var o = game.furniture[j];
       if (m.x > o.x && m.x < o.x + o.w && m.y > o.y && m.y < o.y + o.h) {
         if (o.cool <= 0) hitObject(o);
         game.mists.splice(i, 1); hit = true; break;
       }
     }
-  }
-  for (j = 0; j < L.objects.length; j++) {
-    var ob = L.objects[j];
-    if (ob.cool > 0) ob.cool -= dt;
-    if (ob.flash > 0) ob.flash -= dt;
   }
 
   /* --- oxidation chain queue: staggered ripples destroy neighbors --- */
@@ -852,7 +953,7 @@ function updateBuffBadges() {
    ===================================================================== */
 function drawFrame(t) {
   drawRoom();
-  drawObjects();
+  drawFurniture();
   drawLitterBoxes();
   drawCat();
   drawClouds();
@@ -919,73 +1020,68 @@ function rr(x, y, w, h, r) {
   ctx.closePath();
 }
 
-/* No-spray objects: couch + rolled carpet (left), toy + food bowl on
-   wall shelves (right). Flashing red briefly when mis-sprayed. */
-function drawObjects() {
-  var s = L.scale;
-  for (var i = 0; i < L.objects.length; i++) {
-    var o = L.objects[i];
+/* Rising no-spray objects: couch + rolled carpet drift up the LEFT
+   side, toy + food bowl drift up the RIGHT side — always outside the
+   cloud lane, spaced from active clouds (see trySpawnFurniture). Each
+   flashes red briefly when mis-sprayed. Drawn relative to its own
+   top-left corner (o.x,o.y) + size (o.w,o.h), so it scales cleanly. */
+function drawFurniture() {
+  for (var i = 0; i < game.furniture.length; i++) {
+    var o = game.furniture[i];
     ctx.save();
-    if (o.name === "couch") {
+    ctx.translate(o.x, o.y);
+    if (o.type === "couch") {
       ctx.fillStyle = "#5d5a75";
-      rr(o.x, o.y, o.w, o.h * 0.62, 12 * s); ctx.fill();               // tall back
-      ctx.fillStyle = "#6c6987";
-      rr(o.x - 2, o.y + o.h * 0.52, o.w + 4, o.h * 0.3, 10 * s); ctx.fill(); // seat
-      ctx.fillStyle = "#7a7694";                                       // cushions
-      rr(o.x + 4, o.y + o.h * 0.54, o.w / 2 - 6, o.h * 0.16, 7 * s); ctx.fill();
-      rr(o.x + o.w / 2 + 2, o.y + o.h * 0.54, o.w / 2 - 6, o.h * 0.16, 7 * s); ctx.fill();
-      ctx.fillStyle = "#4a4860";                                       // legs
-      ctx.fillRect(o.x + 4, o.y + o.h - 8, 7, 8);
-      ctx.fillRect(o.x + o.w - 11, o.y + o.h - 8, 7, 8);
-    } else if (o.name === "carpet") {
-      // Rolled-up carpet leaning on the wall.
+      rr(0, 0, o.w, o.h * 0.66, 6); ctx.fill();                         // back
+      ctx.fillStyle = "#7a7694";                                        // cushions
+      rr(o.w * 0.06, o.h * 0.12, o.w * 0.4, o.h * 0.42, 4); ctx.fill();
+      rr(o.w * 0.54, o.h * 0.12, o.w * 0.4, o.h * 0.42, 4); ctx.fill();
+      ctx.fillStyle = "#6c6987";                                        // seat base
+      rr(-o.w * 0.04, o.h * 0.6, o.w * 1.08, o.h * 0.36, 5); ctx.fill();
+    } else if (o.type === "carpet") {
+      // Rolled-up carpet.
       ctx.fillStyle = "#8a7263";
-      rr(o.x, o.y, o.w, o.h, o.w / 2); ctx.fill();
-      ctx.strokeStyle = "#6d594c"; ctx.lineWidth = 2;
+      rr(0, 0, o.w, o.h, o.w / 2); ctx.fill();
+      ctx.strokeStyle = "#6d594c"; ctx.lineWidth = 1.5;
       for (var k = 1; k < 4; k++) {
         ctx.beginPath();
-        ctx.moveTo(o.x + 2, o.y + o.h * k / 4);
-        ctx.lineTo(o.x + o.w - 2, o.y + o.h * k / 4 - 6);
+        ctx.moveTo(1, o.h * k / 4);
+        ctx.lineTo(o.w - 1, o.h * k / 4 - 4);
         ctx.stroke();
       }
-      ctx.fillStyle = "#a08974";                                       // spiral end
-      ctx.beginPath(); ctx.ellipse(o.x + o.w / 2, o.y + o.w / 2, o.w / 2 - 2, o.w / 2.6, 0, 0, 6.29); ctx.fill();
-      ctx.strokeStyle = "#6d594c"; ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.arc(o.x + o.w / 2, o.y + o.w / 2, o.w / 5, 0, 5); ctx.stroke();
-    } else if (o.name === "toy") {
-      // Wall shelf with a yarn-ball cat toy.
-      ctx.fillStyle = "#4a4235";
-      ctx.fillRect(o.x - 4, o.y + o.h - 8, o.w + 8, 8);
-      var bx = o.x + o.w / 2, by = o.y + o.h - 8 - 20 * s, br = 18 * s;
+      ctx.fillStyle = "#a08974";                                        // spiral end
+      ctx.beginPath(); ctx.ellipse(o.w / 2, o.w / 2, o.w / 2 - 1.5, o.w / 2.5, 0, 0, 6.29); ctx.fill();
+      ctx.strokeStyle = "#6d594c"; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.arc(o.w / 2, o.w / 2, o.w / 5, 0, 5); ctx.stroke();
+    } else if (o.type === "toy") {
+      // Yarn-ball cat toy with trailing string.
+      var bx = o.w / 2, by = o.h / 2, br = o.w / 2;
       ctx.fillStyle = "#c96f8e";
       ctx.beginPath(); ctx.arc(bx, by, br, 0, 6.29); ctx.fill();
-      ctx.strokeStyle = "#a34e6e"; ctx.lineWidth = 2;
+      ctx.strokeStyle = "#a34e6e"; ctx.lineWidth = 1.6;
       ctx.beginPath(); ctx.arc(bx, by, br * 0.6, 0.5, 3.4); ctx.stroke();
       ctx.beginPath(); ctx.arc(bx, by, br * 0.85, 2.8, 5.6); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(bx + br * 0.8, by + br * 0.5);       // trailing yarn
-      ctx.quadraticCurveTo(bx + br * 1.7, by + br, bx + br * 1.2, by + br * 1.6);
+      ctx.beginPath(); ctx.moveTo(bx + br * 0.8, by + br * 0.5);
+      ctx.quadraticCurveTo(bx + br * 1.6, by + br * 0.9, bx + br * 1.1, by + br * 1.5);
       ctx.stroke();
-    } else if (o.name === "bowl") {
-      // Wall stand with a food bowl.
-      ctx.fillStyle = "#4a4235";
-      ctx.fillRect(o.x - 4, o.y + o.h - 8, o.w + 8, 8);
-      var cx = o.x + o.w / 2, cy = o.y + o.h - 8;
+    } else { // bowl
+      var cx = o.w / 2, cy = o.h * 0.62;
       ctx.fillStyle = "#c98a4b";
       ctx.beginPath();
-      ctx.moveTo(cx - 22 * s, cy - 22 * s);
-      ctx.quadraticCurveTo(cx, cy + 10 * s, cx + 22 * s, cy - 22 * s);
+      ctx.moveTo(cx - o.w * 0.46, cy - o.h * 0.5);
+      ctx.quadraticCurveTo(cx, cy + o.h * 0.32, cx + o.w * 0.46, cy - o.h * 0.5);
       ctx.closePath(); ctx.fill();
       ctx.fillStyle = "#8f5f2e";
-      ctx.beginPath(); ctx.ellipse(cx, cy - 22 * s, 22 * s, 6 * s, 0, 0, 6.29); ctx.fill();
-      ctx.fillStyle = "#e0b070";                                       // kibble
-      for (var kk = 0; kk < 4; kk++) {
-        ctx.beginPath(); ctx.arc(cx - 12 * s + kk * 8 * s, cy - 23 * s, 2.6 * s, 0, 6.29); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(cx, cy - o.h * 0.5, o.w * 0.46, o.h * 0.15, 0, 0, 6.29); ctx.fill();
+      ctx.fillStyle = "#e0b070";                                        // kibble
+      for (var kk = 0; kk < 3; kk++) {
+        ctx.beginPath(); ctx.arc(cx - o.w * 0.22 + kk * o.w * 0.22, cy - o.h * 0.52, o.w * 0.05, 0, 6.29); ctx.fill();
       }
     }
     if (o.flash > 0) { // brief red outline when mis-sprayed
       ctx.strokeStyle = "rgba(226,87,76," + Math.min(1, o.flash * 2.5) + ")";
       ctx.lineWidth = 3;
-      rr(o.x - 3, o.y - 3, o.w + 6, o.h + 6, 8); ctx.stroke();
+      rr(-3, -3, o.w + 6, o.h + 6, 6); ctx.stroke();
     }
     ctx.restore();
   }
@@ -1192,41 +1288,99 @@ function drawClouds() {
   }
 }
 
+/* Power-ups are collected purely by the player bottle touching/overlapping
+   them as they drift — never sprayable, never require a tap. Each type
+   gets its own bubble color AND a distinct icon (no shared generic look),
+   plus a small always-on text label so there's zero ambiguity about what
+   it does even at a glance during fast play. */
 function drawPowerups() {
   var s = L.scale;
   for (var i = 0; i < game.pups.length; i++) {
     var p = game.pups[i];
     var bob = reducedMotion ? 0 : Math.sin(p.t * 5) * 3;
+    var spin = reducedMotion ? 0 : p.t * 1.4;
     ctx.save();
     ctx.translate(p.x, p.y + bob);
-    // Gradient bubble in brand colors.
-    var g = ctx.createLinearGradient(-16 * s, -16 * s, 16 * s, 16 * s);
-    g.addColorStop(0, TEAL); g.addColorStop(1, PURPLE);
-    ctx.fillStyle = g;
-    ctx.beginPath(); ctx.arc(0, 0, 17 * s, 0, 6.29); ctx.fill();
-    ctx.strokeStyle = "rgba(245,245,242,.85)"; ctx.lineWidth = 2.5;
-    ctx.stroke();
-    ctx.fillStyle = PAPER; ctx.strokeStyle = PAPER;
-    ctx.lineWidth = 2; ctx.lineCap = "round";
-    if (p.type === "boost") {          // droplet icon
-      drawDroplet(0, 1 * s, 7 * s, PAPER);
-    } else if (p.type === "shield") {  // shield icon
+    var R = 19 * s;
+
+    if (p.type === "boost") {
+      // Teal burst: radiating rays behind an OdorSol droplet.
+      ctx.save(); ctx.rotate(spin);
+      ctx.strokeStyle = "rgba(44,169,184,.9)"; ctx.lineWidth = 2.2 * s; ctx.lineCap = "round";
+      for (var ray = 0; ray < 8; ray++) {
+        var ra = (ray / 8) * 6.283;
+        ctx.beginPath();
+        ctx.moveTo(Math.cos(ra) * R * 0.95, Math.sin(ra) * R * 0.95);
+        ctx.lineTo(Math.cos(ra) * R * 1.4, Math.sin(ra) * R * 1.4);
+        ctx.stroke();
+      }
+      ctx.restore();
+      var gB = ctx.createRadialGradient(0, -4 * s, 2, 0, 0, R);
+      gB.addColorStop(0, "#57cfdc"); gB.addColorStop(1, TEAL);
+      ctx.fillStyle = gB;
+      ctx.beginPath(); ctx.arc(0, 0, R, 0, 6.29); ctx.fill();
+      ctx.strokeStyle = "rgba(245,245,242,.9)"; ctx.lineWidth = 2.5; ctx.stroke();
+      drawDroplet(0, 2 * s, 9.5 * s, PAPER);
+    } else if (p.type === "shield") {
+      // Purple bubble: a shield badge with a checkmark.
+      var gS = ctx.createRadialGradient(0, -4 * s, 2, 0, 0, R);
+      gS.addColorStop(0, "#a98bd6"); gS.addColorStop(1, PURPLE);
+      ctx.fillStyle = gS;
+      ctx.beginPath(); ctx.arc(0, 0, R, 0, 6.29); ctx.fill();
+      ctx.strokeStyle = "rgba(245,245,242,.9)"; ctx.lineWidth = 2.5; ctx.stroke();
+      ctx.fillStyle = PAPER;
       ctx.beginPath();
-      ctx.moveTo(0, -8 * s); ctx.lineTo(7 * s, -4 * s); ctx.lineTo(7 * s, 2 * s);
-      ctx.quadraticCurveTo(7 * s, 8 * s, 0, 10 * s);
-      ctx.quadraticCurveTo(-7 * s, 8 * s, -7 * s, 2 * s);
-      ctx.lineTo(-7 * s, -4 * s); ctx.closePath(); ctx.fill();
-    } else if (p.type === "scoop") {   // litter scoop icon
+      ctx.moveTo(0, -10.5 * s); ctx.lineTo(9 * s, -6 * s); ctx.lineTo(9 * s, 2.5 * s);
+      ctx.quadraticCurveTo(9 * s, 10 * s, 0, 13 * s);
+      ctx.quadraticCurveTo(-9 * s, 10 * s, -9 * s, 2.5 * s);
+      ctx.lineTo(-9 * s, -6 * s); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = PURPLE; ctx.lineWidth = 1.8 * s; ctx.lineCap = "round";
+      ctx.beginPath(); ctx.moveTo(-4 * s, 0.5 * s); ctx.lineTo(-1 * s, 4.5 * s); ctx.lineTo(5 * s, -4.5 * s); ctx.stroke();
+    } else if (p.type === "scoop") {
+      // Paper bubble: a literal slotted litter scoop, angled like a tool.
+      ctx.fillStyle = PAPER;
+      ctx.beginPath(); ctx.arc(0, 0, R, 0, 6.29); ctx.fill();
+      ctx.strokeStyle = TEAL; ctx.lineWidth = 2.5; ctx.stroke();
+      ctx.save(); ctx.rotate(-0.55);
+      ctx.strokeStyle = INK; ctx.lineWidth = 3 * s; ctx.lineCap = "round";
+      ctx.beginPath(); ctx.moveTo(-2 * s, -12 * s); ctx.lineTo(-2 * s, 1 * s); ctx.stroke();  // handle
+      ctx.fillStyle = INK;
       ctx.beginPath();
-      ctx.moveTo(-7 * s, 2 * s); ctx.lineTo(2 * s, 2 * s);
-      ctx.lineTo(2 * s, 8 * s); ctx.lineTo(-7 * s, 8 * s); ctx.closePath(); ctx.fill();
-      ctx.beginPath(); ctx.moveTo(2 * s, 3 * s); ctx.lineTo(9 * s, -7 * s); ctx.stroke();
-    } else {                            // oxidation wave: ripple rings
-      ctx.beginPath(); ctx.arc(0, 0, 3.5 * s, 0, 6.29); ctx.fill();
-      ctx.beginPath(); ctx.arc(0, 0, 7.5 * s, 0, 6.29); ctx.stroke();
-      ctx.beginPath(); ctx.arc(0, 0, 11 * s, 0.6, 2.5); ctx.stroke();
-      ctx.beginPath(); ctx.arc(0, 0, 11 * s, 3.7, 5.7); ctx.stroke();
+      ctx.moveTo(-9 * s, 1 * s); ctx.lineTo(7 * s, 1 * s);
+      ctx.lineTo(5 * s, 10 * s); ctx.lineTo(-7 * s, 10 * s);
+      ctx.closePath(); ctx.fill();                                                            // scoop head
+      ctx.strokeStyle = PAPER; ctx.lineWidth = 1.3 * s;
+      for (var slot = -1; slot <= 1; slot++) {
+        ctx.beginPath(); ctx.moveTo(slot * 3.4 * s, 3.2 * s); ctx.lineTo(slot * 3.4 * s, 7.8 * s); ctx.stroke();
+      }
+      ctx.restore();
+    } else {
+      // Teal-purple bubble: expanding ripple rings + a sparkle accent.
+      var gO = ctx.createLinearGradient(-R, -R, R, R);
+      gO.addColorStop(0, TEAL); gO.addColorStop(1, PURPLE);
+      ctx.fillStyle = gO;
+      ctx.beginPath(); ctx.arc(0, 0, R, 0, 6.29); ctx.fill();
+      ctx.strokeStyle = "rgba(245,245,242,.9)"; ctx.lineWidth = 2.5; ctx.stroke();
+      ctx.strokeStyle = PAPER; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(0, 1 * s, 4.5 * s, 0, 6.29); ctx.stroke();
+      ctx.beginPath(); ctx.arc(0, 1 * s, 9 * s, 0.5, 2.6); ctx.stroke();
+      ctx.beginPath(); ctx.arc(0, 1 * s, 9 * s, 3.6, 5.8); ctx.stroke();
+      ctx.fillStyle = PAPER;
+      ctx.beginPath();
+      ctx.moveTo(7 * s, -9 * s); ctx.lineTo(8.6 * s, -6 * s); ctx.lineTo(11.5 * s, -5.4 * s);
+      ctx.lineTo(8.6 * s, -4 * s); ctx.lineTo(7 * s, -1 * s); ctx.lineTo(5.6 * s, -4 * s);
+      ctx.lineTo(2.7 * s, -5.4 * s); ctx.lineTo(5.6 * s, -6 * s); ctx.closePath(); ctx.fill();
     }
+
+    // Always-on short label — removes any remaining ambiguity about type.
+    var short = PUP_DEFS[p.type].short;
+    ctx.font = "800 " + Math.max(7, 8 * s) + "px Arial, sans-serif";
+    var lblW = Math.max(30 * s, ctx.measureText(short).width + 10 * s);
+    ctx.fillStyle = "rgba(13,19,25,.82)";
+    rr(-lblW / 2, R + 3 * s, lblW, 12 * s, 5 * s); ctx.fill();
+    ctx.fillStyle = PAPER;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(short, 0, R + 9 * s);
     ctx.restore();
   }
 }
@@ -1448,8 +1602,9 @@ function resetGame() {
   setFresh(100);
   game.clouds.length = 0; game.mists.length = 0; game.sparks.length = 0;
   game.floats.length = 0; game.pups.length = 0; game.ripples.length = 0;
-  game.chain.length = 0;
+  game.chain.length = 0; game.furniture.length = 0;
   game.shieldT = 0; game.scoopT = 0; game.pupT = 12; game.sprayCd = 0;
+  game.furnSpawnT = rand(1.5, 3); game.lastCloudSpawnT = -99; game.lastFurnSpawnT = -99;
   game.time = 0; game.flashRed = 0; game.flashTeal = 0;
   game.player.x = W / 2; game.player.squeeze = 0;
   game.cat.happy = 0; game.cat.cheer = 0; game.cat.blink = 0; game.cat.nextBlink = 3;
@@ -1566,6 +1721,18 @@ el("btnMute").addEventListener("click", function () {
   el("btnMute").setAttribute("aria-label", audio.muted ? "Unmute sound" : "Mute sound");
   sfx.click();
 });
+
+/* Belt-and-braces audio unlock: browsers require a user gesture before
+   any sound can play, and Start Game / Mute already cover the normal
+   path — but if the very first tap lands anywhere else on the page,
+   this catches it too so audio is never left silently unresumed. */
+function unlockAudioOnce() {
+  audio.init();
+  document.removeEventListener("pointerdown", unlockAudioOnce);
+  document.removeEventListener("keydown", unlockAudioOnce);
+}
+document.addEventListener("pointerdown", unlockAudioOnce, { once: true });
+document.addEventListener("keydown", unlockAudioOnce, { once: true });
 
 /* Auto-pause when the tab is hidden (also keeps timers honest). */
 document.addEventListener("visibilitychange", function () {
