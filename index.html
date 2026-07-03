@@ -1,0 +1,1536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Litter Box Rescue: Odor Invasion — a free arcade game by OdorSol. Spray litter-box odor clouds, dodge the furniture, and keep your home fresh. OdorSol Cat Litter Deodorizing Spray is intended for cat litter only.">
+<title>Litter Box Rescue: Odor Invasion — an OdorSol Game</title>
+<style>
+/* ============================================================
+   OdorSol brand palette (sampled from the real product label)
+   Teal      #2CA9B8   Purple    #8B6FB3
+   Black     #1A1A1A   Label bg  #F5F5F2   Label text #2B2B2B
+   ============================================================ */
+:root{
+  --teal:#2CA9B8;
+  --purple:#8B6FB3;
+  --ink:#1A1A1A;
+  --paper:#F5F5F2;
+  --paper-ink:#2B2B2B;
+  --grad:linear-gradient(135deg,var(--teal),var(--purple));
+  --danger:#e2574c;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#0d1319;
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--paper);}
+button{font-family:inherit;cursor:pointer;}
+
+/* ---------- Game shell ---------- */
+#wrap{
+  position:fixed;inset:0;
+  height:100dvh;              /* dynamic viewport for mobile browsers */
+  touch-action:none;          /* stop page scroll / pinch while playing */
+  user-select:none;-webkit-user-select:none;
+  padding-left:env(safe-area-inset-left);
+  padding-right:env(safe-area-inset-right);
+}
+#game{display:block;width:100%;height:100%;background:#0d1319;}
+
+/* ---------- HUD (HTML/CSS layer over the canvas) ---------- */
+#hud{
+  position:absolute;top:0;left:0;right:0;
+  display:none;align-items:flex-start;gap:8px;
+  padding:calc(6px + env(safe-area-inset-top)) 10px 4px;
+  pointer-events:none;
+  z-index:5;
+}
+#hud.on{display:flex;}
+.hud-box{
+  background:rgba(26,26,26,.72);
+  border:1px solid rgba(44,169,184,.45);
+  border-radius:10px;padding:5px 10px;backdrop-filter:blur(2px);
+}
+#scoreBox{min-width:92px;}
+#scoreVal{font-size:18px;font-weight:800;letter-spacing:.5px;}
+#waveVal{font-size:11px;color:var(--teal);font-weight:700;text-transform:uppercase;letter-spacing:1px;}
+#meterCol{flex:1;max-width:420px;margin:0 auto;}
+#meterLabel{font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;
+  display:flex;justify-content:space-between;margin-bottom:3px;color:#cfd8dc;}
+#meterTrack{height:14px;border-radius:8px;background:rgba(245,245,242,.15);
+  border:1px solid rgba(245,245,242,.25);overflow:hidden;}
+#meterFill{height:100%;width:100%;border-radius:7px;background:var(--grad);
+  transition:width .25s ease;}
+#meterTrack.low{border-color:var(--danger);animation:lowPulse 1s infinite;}
+@keyframes lowPulse{50%{box-shadow:0 0 10px 2px rgba(226,87,76,.7);}}
+#buffs{display:flex;gap:6px;margin-top:4px;flex-wrap:wrap;min-height:16px;}
+.buff{font-size:10px;font-weight:700;padding:1px 7px;border-radius:8px;
+  background:rgba(44,169,184,.25);border:1px solid var(--teal);color:#dff5f8;}
+.hud-btns{display:flex;gap:6px;pointer-events:auto;}
+.icon-btn{
+  width:38px;height:38px;border-radius:10px;border:1px solid rgba(44,169,184,.5);
+  background:rgba(26,26,26,.72);color:var(--paper);font-size:17px;line-height:1;
+}
+.icon-btn:active{background:rgba(44,169,184,.4);}
+
+/* ---------- Floating message area (nudges, power-up callouts) ---------- */
+#msgArea{
+  position:absolute;left:0;right:0;top:20%;
+  display:flex;flex-direction:column;align-items:center;gap:6px;
+  pointer-events:none;z-index:6;padding:0 12px;
+}
+.msg{
+  background:rgba(26,26,26,.88);border:1px solid var(--teal);
+  color:var(--paper);border-radius:12px;padding:7px 16px;
+  font-size:14px;font-weight:600;text-align:center;max-width:92%;
+  animation:msgIn 2.4s ease forwards;
+}
+.msg.warn{border-color:var(--danger);color:#ffd9d5;}
+.msg.good{border-color:var(--purple);}
+@keyframes msgIn{
+  0%{opacity:0;transform:translateY(8px);}
+  10%,72%{opacity:1;transform:translateY(0);}
+  100%{opacity:0;transform:translateY(-10px);}
+}
+@media (prefers-reduced-motion: reduce){
+  .msg{animation:msgFade 2.4s ease forwards;}
+  @keyframes msgFade{0%{opacity:0;}12%,75%{opacity:1;}100%{opacity:0;}}
+}
+
+/* ---------- Wave banner ---------- */
+#waveBanner{
+  position:absolute;left:50%;top:34%;transform:translate(-50%,-50%);
+  text-align:center;z-index:6;pointer-events:none;opacity:0;transition:opacity .35s ease;
+}
+#waveBanner.show{opacity:1;}
+#waveBanner .wb-title{font-size:34px;font-weight:900;letter-spacing:2px;
+  background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent;
+  filter:drop-shadow(0 2px 6px rgba(0,0,0,.7));}
+#waveBanner .wb-sub{font-size:13px;font-weight:600;color:#cfe9ec;margin-top:2px;
+  text-shadow:0 1px 4px #000;}
+
+/* ---------- Touch controls (phones / tablets) ---------- */
+#touch{
+  position:absolute;left:0;right:0;bottom:0;z-index:7;
+  display:none;justify-content:space-between;align-items:flex-end;
+  padding:8px 14px calc(10px + env(safe-area-inset-bottom));
+  pointer-events:none;
+}
+@media (pointer:coarse){ #touch.on{display:flex;} }
+.tc-pad{display:flex;gap:12px;pointer-events:auto;}
+.tc-btn{
+  width:64px;height:64px;border-radius:18px;font-size:26px;font-weight:800;
+  border:2px solid rgba(44,169,184,.6);background:rgba(26,26,26,.65);color:var(--paper);
+  touch-action:none;
+}
+.tc-btn:active{background:rgba(44,169,184,.45);}
+#tSpray{
+  width:84px;height:84px;border-radius:50%;font-size:15px;letter-spacing:1px;
+  background:var(--grad);border:3px solid rgba(245,245,242,.85);color:#fff;
+  font-weight:900;box-shadow:0 4px 14px rgba(44,169,184,.5);
+  pointer-events:auto;touch-action:none;
+}
+#tSpray:active{transform:scale(.94);}
+
+/* ---------- Full-screen overlays (start / pause / game over) ---------- */
+.overlay{
+  position:absolute;inset:0;z-index:10;display:none;
+  align-items:center;justify-content:center;
+  background:radial-gradient(ellipse at 50% 30%,rgba(23,34,44,.94),rgba(10,14,19,.97));
+  padding:16px;overflow-y:auto;
+}
+.overlay.on{display:flex;}
+.panel{
+  width:100%;max-width:460px;text-align:center;
+  padding:20px 18px calc(14px + env(safe-area-inset-bottom));
+}
+.logo-row{display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:4px;}
+.droplet{
+  width:20px;height:20px;background:linear-gradient(135deg,var(--teal),var(--purple));
+  border-radius:80% 0 55% 55%;transform:rotate(45deg);flex:0 0 auto;
+}
+.brand-name{font-weight:800;font-size:17px;letter-spacing:.5px;color:var(--paper);}
+h1{margin:2px 0 0;font-size:clamp(28px,8vw,42px);font-weight:900;letter-spacing:1px;line-height:1.05;
+  background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent;}
+.subtitle{font-size:clamp(15px,4.5vw,20px);font-weight:800;letter-spacing:4px;
+  text-transform:uppercase;color:#cfe9ec;margin:2px 0 10px;}
+.tagline{font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--teal);margin-bottom:14px;}
+.desc{font-size:14px;line-height:1.5;color:#dbe4e8;margin:0 auto 8px;max-width:400px;}
+.tip{font-size:13px;font-weight:700;color:#f4d9a0;margin:0 auto 18px;max-width:400px;}
+.btn{
+  display:inline-block;border:none;border-radius:14px;font-weight:800;
+  padding:14px 30px;font-size:17px;letter-spacing:.5px;margin:5px;
+  text-decoration:none;
+}
+.btn-primary{background:var(--grad);color:#fff;box-shadow:0 4px 16px rgba(44,169,184,.45);}
+.btn-primary:active{transform:translateY(1px);}
+.btn-ghost{background:transparent;color:#cfe9ec;border:2px solid rgba(44,169,184,.55);}
+.btn-ghost:active{background:rgba(44,169,184,.2);}
+.disclaimer{
+  margin-top:18px;padding:10px 12px;border-radius:10px;
+  background:rgba(245,245,242,.08);border:1px solid rgba(245,245,242,.2);
+  font-size:12px;line-height:1.45;color:#c9d3d8;
+}
+.keys{font-size:12px;color:#9fb3bb;margin-top:12px;}
+.keys b{color:#cfe9ec;}
+
+/* How-to-play modal */
+#howto .panel{max-width:430px;background:rgba(26,26,26,.92);border:1px solid rgba(44,169,184,.4);
+  border-radius:16px;text-align:left;}
+#howto h2{margin:0 0 4px;font-size:22px;background:var(--grad);
+  -webkit-background-clip:text;background-clip:text;color:transparent;text-align:center;}
+#howto .tagline{text-align:center;}
+#howto ul{margin:0;padding-left:20px;font-size:14px;line-height:1.65;color:#dbe4e8;}
+#howto li b{color:var(--paper);}
+#howto .center{text-align:center;margin-top:14px;}
+
+/* Game over screen */
+#overScreen .rating{font-size:clamp(22px,6.5vw,30px);font-weight:900;margin:6px 0 2px;
+  background:var(--grad);-webkit-background-clip:text;background-clip:text;color:transparent;}
+#overScreen .final{font-size:16px;color:#dbe4e8;margin-bottom:14px;}
+#overScreen .final b{font-size:26px;color:var(--paper);}
+#btnShop{
+  font-size:20px;padding:18px 40px;border-radius:16px;
+  box-shadow:0 6px 24px rgba(139,111,179,.6),0 0 0 3px rgba(245,245,242,.25);
+  animation:shopPulse 1.8s ease-in-out infinite;
+}
+@keyframes shopPulse{50%{transform:scale(1.04);box-shadow:0 6px 30px rgba(44,169,184,.7),0 0 0 3px rgba(245,245,242,.35);}}
+@media (prefers-reduced-motion: reduce){ #btnShop{animation:none;} }
+#btnAgain{font-size:14px;padding:10px 22px;}
+.over-msg{font-size:13px;color:#cfd8dc;line-height:1.5;margin:10px auto 0;max-width:380px;}
+
+@media (max-height:560px){ /* short landscape phones: tighten overlays */
+  h1{font-size:26px;} .subtitle{margin-bottom:4px;}
+  .desc,.tip{margin-bottom:6px;} .disclaimer{margin-top:8px;}
+}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game"></canvas>
+
+  <!-- HUD chrome (HTML layer) -->
+  <div id="hud">
+    <div class="hud-box" id="scoreBox">
+      <div id="scoreVal">0</div>
+      <div id="waveVal">Wave 1</div>
+    </div>
+    <div id="meterCol">
+      <div id="meterLabel"><span>Freshness</span><span id="meterPct">100%</span></div>
+      <div id="meterTrack"><div id="meterFill"></div></div>
+      <div id="buffs"></div>
+    </div>
+    <div class="hud-btns">
+      <button class="icon-btn" id="btnMute" aria-label="Mute or unmute sound">🔊</button>
+      <button class="icon-btn" id="btnPause" aria-label="Pause game">⏸</button>
+    </div>
+  </div>
+
+  <div id="msgArea"></div>
+  <div id="waveBanner"><div class="wb-title"></div><div class="wb-sub"></div></div>
+
+  <!-- Touch controls -->
+  <div id="touch">
+    <div class="tc-pad">
+      <button class="tc-btn" id="tLeft" aria-label="Move left">◀</button>
+      <button class="tc-btn" id="tRight" aria-label="Move right">▶</button>
+    </div>
+    <button id="tSpray" aria-label="Spray">SPRAY</button>
+  </div>
+
+  <!-- Start screen -->
+  <div class="overlay on" id="startScreen">
+    <div class="panel">
+      <div class="logo-row"><span class="droplet"></span><span class="brand-name">OdorSol</span></div>
+      <h1>Litter Box Rescue</h1>
+      <div class="subtitle">Odor Invasion</div>
+      <div class="tagline">Stop litter odor at the source</div>
+      <p class="desc">Defend the house from litter-box odor clouds. Spray the odors, avoid non-litter objects, and keep the freshness meter full.</p>
+      <p class="tip">Aim for litter-box odors only — spraying other things costs points.</p>
+      <button class="btn btn-primary" id="btnStart">Start Game</button>
+      <button class="btn btn-ghost" id="btnHow">How to Play</button>
+      <div class="keys">Move: <b>← → / A D</b> &nbsp;•&nbsp; Spray: <b>Space / Click</b> &nbsp;•&nbsp; Pause: <b>P</b></div>
+      <div class="disclaimer">Game is for fun. Follow actual product directions. OdorSol Cat Litter Deodorizing Spray is intended for use on cat litter only.</div>
+    </div>
+  </div>
+
+  <!-- How to play modal -->
+  <div class="overlay" id="howto">
+    <div class="panel">
+      <h2>How to Play</h2>
+      <div class="tagline">Engineered for litter environments</div>
+      <ul>
+        <li><b>Move the OdorSol bottle</b> left and right along the floor.</li>
+        <li><b>Spray upward</b> to zap odor clouds rising from the litter boxes before they escape into the house.</li>
+        <li><b>Know your odors:</b> puffy green = normal stink, spiky yellow = fast ammonia, swirly purple = zigzagging mystery stink, big red = mega multi-cat odor (needs two hits!).</li>
+        <li><b>Don't spray the couch, carpet roll, cat toy, or food bowl</b> on the sides — OdorSol is for cat litter only, and wrong targets cost points.</li>
+        <li><b>Your cat is a friend,</b> not a target. Watch it cheer when you clear the air nearby!</li>
+        <li><b>Keep Freshness above zero.</b> Escaped clouds drain the meter — at 0% it's game over.</li>
+        <li><b>Catch falling power-ups:</b> OdorSol Boost, Fresh Home Shield, Scoop Bonus, and the chain-reacting Oxidation Wave.</li>
+      </ul>
+      <div class="center"><button class="btn btn-primary" id="btnHowClose">Got it!</button></div>
+    </div>
+  </div>
+
+  <!-- Pause screen -->
+  <div class="overlay" id="pauseScreen">
+    <div class="panel">
+      <div class="logo-row"><span class="droplet"></span><span class="brand-name">OdorSol</span></div>
+      <h1 style="font-size:30px;">Paused</h1>
+      <div class="tagline">Don't mask it. Eliminate it.</div>
+      <button class="btn btn-primary" id="btnResume">Resume</button>
+      <button class="btn btn-ghost" id="btnRestartP">Restart</button>
+    </div>
+  </div>
+
+  <!-- Game over screen: Shop OdorSol is deliberately the dominant CTA -->
+  <div class="overlay" id="overScreen">
+    <div class="panel">
+      <div class="logo-row"><span class="droplet"></span><span class="brand-name">OdorSol</span></div>
+      <h1 style="font-size:clamp(24px,7vw,34px);">Game Over</h1>
+      <div class="rating" id="ratingTxt">Freshness Fighter</div>
+      <a class="btn btn-primary" id="btnShop" href="https://odorsol.com" target="_blank" rel="noopener">Shop OdorSol</a>
+      <div class="final">Final score: <b id="finalScore">0</b> &nbsp;•&nbsp; Waves survived: <span id="finalWave">1</span></div>
+      <div><button class="btn btn-ghost" id="btnAgain">Play Again</button></div>
+      <p class="over-msg">Great job fighting litter-box odor. Remember: OdorSol is intended for cat litter only.<br>
+      <span style="color:var(--teal);font-weight:700;">Apply. Activate. Oxidize. Sustain.</span></p>
+      <div class="disclaimer">Game is for fun. Follow actual product directions. OdorSol Cat Litter Deodorizing Spray is intended for use on cat litter only.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* =====================================================================
+   Litter Box Rescue: Odor Invasion — a single-file OdorSol arcade game.
+   Canvas draws all gameplay; HTML/CSS handles UI chrome on top.
+   ===================================================================== */
+
+/* ---------- Brand palette (keep in sync with CSS) ---------- */
+var TEAL   = "#2CA9B8";
+var PURPLE = "#8B6FB3";
+var INK    = "#1A1A1A";
+var PAPER  = "#F5F5F2";
+var PAPER_INK = "#2B2B2B";
+
+/* Respect the OS "reduce motion" setting: fewer/no particle bursts. */
+var reducedMotion = false;
+try {
+  var rmq = window.matchMedia("(prefers-reduced-motion: reduce)");
+  reducedMotion = rmq.matches;
+  if (rmq.addEventListener) rmq.addEventListener("change", function (e) { reducedMotion = e.matches; });
+} catch (e) { /* very old browser — assume full motion */ }
+
+/* ---------- DOM references ---------- */
+var canvas = document.getElementById("game");
+var ctx = canvas.getContext("2d");
+var el = function (id) { return document.getElementById(id); };
+var hud = el("hud"), scoreVal = el("scoreVal"), waveVal = el("waveVal");
+var meterFill = el("meterFill"), meterPct = el("meterPct"), meterTrack = el("meterTrack");
+var buffsBox = el("buffs"), msgArea = el("msgArea");
+var waveBanner = el("waveBanner");
+var touchBox = el("touch");
+var startScreen = el("startScreen"), howto = el("howto");
+var pauseScreen = el("pauseScreen"), overScreen = el("overScreen");
+
+/* ---------- Canvas sizing (crisp on high-DPI, responsive) ---------- */
+var W = 0, H = 0;                 // logical size in CSS pixels
+function resize() {
+  var dpr = Math.min(window.devicePixelRatio || 1, 2); // cap DPR for mobile perf
+  W = canvas.parentElement.clientWidth;
+  H = canvas.parentElement.clientHeight;
+  canvas.width = Math.round(W * dpr);
+  canvas.height = Math.round(H * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  layout();
+  if (game.state !== "playing") drawFrame(0); // repaint static scene behind overlays
+}
+
+/* ---------- Room layout: recomputed on resize ----------
+   The odor "flight lane" is the middle band; furniture and other
+   no-spray objects live clearly off to the sides of it.            */
+var L = {};
+function layout() {
+  var floorY = H - 56;
+  var s = Math.min(1, Math.max(0.72, Math.min(W / 560, H / 640))); // sprite scale
+  L.floorY = floorY;
+  L.scale = s;
+  L.laneL = W * 0.28;
+  L.laneR = W * 0.72;
+  L.escapeY = 64;                                    // clouds above this line escape
+  var boxW = Math.max(64, Math.min(W * 0.13, 108));
+  L.boxes = [
+    { x: W * 0.385, w: boxW },
+    { x: W * 0.615, w: boxW }
+  ];
+  // Cat sits on the floor near the litter boxes, just OUTSIDE the lane.
+  L.cat = { x: Math.min(L.laneR + 30 * s + 8, W * 0.79), y: floorY };
+  // No-spray objects: hit rectangles {x,y,w,h} + a display name.
+  var couchW = Math.max(62, Math.min(W * 0.17, 160));
+  var couchX = Math.max(6, W * 0.02);
+  var rollW = Math.max(20, Math.min(W * 0.05, 34));
+  var shelfW = Math.max(48, Math.min(W * 0.14, 86));
+  var shelfX = W - 8 - shelfW;
+  L.objects = [
+    { name: "couch",  x: couchX, y: floorY - 218 * s, w: couchW, h: 218 * s, flash: 0, cool: 0 },
+    { name: "carpet", x: couchX + couchW + 6, y: floorY - 196 * s, w: rollW, h: 196 * s, flash: 0, cool: 0 },
+    { name: "toy",    x: shelfX, y: floorY - 268 * s, w: shelfW, h: 66 * s, flash: 0, cool: 0 },
+    { name: "bowl",   x: shelfX, y: floorY - 178 * s, w: shelfW, h: 58 * s, flash: 0, cool: 0 }
+  ];
+}
+
+/* =====================================================================
+   AUDIO — all sounds generated with the Web Audio API (no files).
+   The context is only created after the player presses Start / unmutes,
+   so nothing ever autoplays.
+   ===================================================================== */
+var audio = {
+  ctx: null, master: null, noiseBuf: null, muted: false,
+  init: function () {
+    if (this.ctx) { if (this.ctx.state === "suspended") this.ctx.resume(); return; }
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      this.ctx = new AC();
+      this.master = this.ctx.createGain();
+      this.master.gain.value = 0.4;
+      this.master.connect(this.ctx.destination);
+      // Pre-build a half-second white-noise buffer, reused for spray/hiss.
+      var len = Math.floor(this.ctx.sampleRate * 0.5);
+      this.noiseBuf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+      var d = this.noiseBuf.getChannelData(0);
+      for (var i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    } catch (e) { this.ctx = null; }
+  },
+  /* One tone: freq -> slideTo over dur seconds. */
+  tone: function (freq, dur, type, vol, slideTo, delay) {
+    if (!this.ctx || this.muted) return;
+    var t = this.ctx.currentTime + (delay || 0);
+    var o = this.ctx.createOscillator(), g = this.ctx.createGain();
+    o.type = type || "sine";
+    o.frequency.setValueAtTime(freq, t);
+    if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
+    g.gain.setValueAtTime(vol || 0.2, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g); g.connect(this.master);
+    o.start(t); o.stop(t + dur + 0.02);
+  },
+  /* Filtered noise burst (spray hiss, penalties). */
+  hiss: function (dur, vol, cutoff) {
+    if (!this.ctx || this.muted || !this.noiseBuf) return;
+    var t = this.ctx.currentTime;
+    var src = this.ctx.createBufferSource(); src.buffer = this.noiseBuf;
+    var f = this.ctx.createBiquadFilter(); f.type = "bandpass"; f.frequency.value = cutoff;
+    var g = this.ctx.createGain();
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    src.connect(f); f.connect(g); g.connect(this.master);
+    src.start(t); src.stop(t + dur + 0.02);
+  }
+};
+var sfx = {
+  spray:   function () { audio.hiss(0.16, 0.25, 4200); },
+  pop:     function () { audio.tone(620, 0.13, "sine", 0.22, 1400); audio.hiss(0.08, 0.1, 6000); },
+  crack:   function () { audio.tone(300, 0.1, "square", 0.12, 200); },
+  escape:  function () { audio.tone(210, 0.3, "sine", 0.2, 80); },
+  penalty: function () { audio.tone(120, 0.22, "square", 0.16, 90); audio.tone(95, 0.26, "square", 0.1, 70, null, 0.05); },
+  power:   function () { audio.tone(520, 0.1, "triangle", 0.2); audio.tone(680, 0.1, "triangle", 0.2, null, 0.09); audio.tone(880, 0.16, "triangle", 0.22, null, 0.18); },
+  waveWin: function () { [520, 660, 780, 1040].forEach(function (f, i) { audio.tone(f, 0.14, "triangle", 0.2, null, i * 0.1); }); },
+  over:    function () { [420, 330, 240].forEach(function (f, i) { audio.tone(f, 0.3, "sine", 0.2, null, i * 0.22); }); },
+  click:   function () { audio.tone(760, 0.06, "sine", 0.14); }
+};
+
+/* =====================================================================
+   GAME STATE
+   ===================================================================== */
+var MAX_CLOUDS = 12;      // cap simultaneous clouds (mobile frame rate)
+var MAX_MIST = 110;       // cap spray particles
+var MAX_SPARKS = 90;      // cap sparkle/heart particles
+
+var TAGLINES = [
+  "Stop litter odor at the source",
+  "Don't mask it. Eliminate it.",
+  "Apply. Activate. Oxidize. Sustain.",
+  "Engineered for litter environments",
+  "For cat litter only"
+];
+
+/* Odor cloud definitions. Shapes/icons differ as well as colors so the
+   types stay distinguishable with color vision deficiency:
+   green = puffy cloud + stink squiggles, yellow = spiky burst + bolt,
+   purple = swirl + "?", red = big double-lobe + "××" and 2 HP pips.  */
+var CLOUD_DEFS = {
+  green:  { color: "#86c34a", edge: "#5c9330", r: 25, pts: 50,  loss: 5,  hp: 1, speed: 1 },
+  yellow: { color: "#e8c93e", edge: "#b2951d", r: 22, pts: 75,  loss: 8,  hp: 1, speed: 1.55 },
+  purple: { color: "#9a6fd0", edge: "#6d47a4", r: 24, pts: 100, loss: 10, hp: 1, speed: 1.05 },
+  red:    { color: "#e2574c", edge: "#a83028", r: 33, pts: 150, loss: 15, hp: 2, speed: 0.78 }
+};
+
+var PUP_DEFS = {
+  boost:  { label: "OdorSol Boost!",   short: "BOOST" },
+  shield: { label: "Fresh Home Shield!", short: "SHIELD" },
+  scoop:  { label: "Scoop Bonus! Odors slowed", short: "SCOOP" },
+  oxwave: { label: "Oxidation Wave!",  short: "OX-WAVE" }
+};
+
+var game = {
+  state: "start",          // start | playing | paused | gameover
+  score: 0, fresh: 100, wave: 1,
+  player: { x: 0, dir: 0, squeeze: 0 },
+  clouds: [], mists: [], sparks: [], floats: [], pups: [], ripples: [], chain: [],
+  toSpawn: 0, spawnT: 0, interT: 0,   // wave spawn bookkeeping
+  shieldT: 0, scoopT: 0,              // timed power-ups (seconds left)
+  pupT: 12, sprayCd: 0,
+  time: 0, raf: 0, last: 0,
+  cat: { happy: 0, cheer: 0, blink: 0, nextBlink: 3 },
+  flashRed: 0, flashTeal: 0           // top-of-screen escape/shield flashes
+};
+var keys = { left: false, right: false, spray: false };
+var msgTimers = [];                    // tracked so restart can clear them
+var bannerTimer = 0;
+
+/* ---------- Small helpers ---------- */
+function rand(a, b) { return a + Math.random() * (b - a); }
+function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
+function addScore(d) { game.score = Math.max(0, game.score + d); scoreVal.textContent = game.score; }
+function setFresh(v) {
+  game.fresh = clamp(v, 0, 100);
+  meterFill.style.width = game.fresh + "%";
+  meterPct.textContent = Math.round(game.fresh) + "%";
+  meterTrack.classList.toggle("low", game.fresh < 30);
+}
+
+/* ---------- Messages (fading nudges, never punishing walls of text) --- */
+function showMsg(text, cls) {
+  while (msgArea.children.length >= 3) msgArea.removeChild(msgArea.firstChild);
+  var d = document.createElement("div");
+  d.className = "msg" + (cls ? " " + cls : "");
+  d.textContent = text;
+  msgArea.appendChild(d);
+  msgTimers.push(setTimeout(function () { if (d.parentNode) d.parentNode.removeChild(d); }, 2450));
+}
+function clearMsgs() {
+  msgTimers.forEach(clearTimeout); msgTimers = [];
+  msgArea.textContent = "";
+  clearTimeout(bannerTimer);
+  waveBanner.classList.remove("show");
+}
+function showBanner(title, sub, ms) {
+  waveBanner.querySelector(".wb-title").textContent = title;
+  waveBanner.querySelector(".wb-sub").textContent = sub || "";
+  waveBanner.classList.add("show");
+  clearTimeout(bannerTimer);
+  bannerTimer = setTimeout(function () { waveBanner.classList.remove("show"); }, ms || 1700);
+}
+
+/* =====================================================================
+   WAVES & SPAWNING — difficulty ramps: more clouds, faster clouds.
+   ===================================================================== */
+function startWave(n) {
+  game.wave = n;
+  game.toSpawn = Math.min(5 + n * 2, 26);
+  game.spawnT = 1.2;
+  game.interT = 0;
+  waveVal.textContent = "Wave " + n;
+  showBanner("Wave " + n, TAGLINES[(n - 1) % TAGLINES.length]);
+}
+function pickCloudType() {
+  var w = game.wave, pool = [["green", 10]];
+  if (w >= 2) pool.push(["yellow", 4 + w]);
+  if (w >= 3) pool.push(["purple", 3 + w]);
+  if (w >= 4) pool.push(["red", 2 + w * 0.8]);
+  var total = 0, i;
+  for (i = 0; i < pool.length; i++) total += pool[i][1];
+  var r = Math.random() * total;
+  for (i = 0; i < pool.length; i++) { r -= pool[i][1]; if (r <= 0) return pool[i][0]; }
+  return "green";
+}
+function spawnCloud() {
+  var type = pickCloudType(), def = CLOUD_DEFS[type];
+  var box = L.boxes[Math.floor(Math.random() * L.boxes.length)];
+  var speed = (32 + game.wave * 6.5) * Math.min(1.4, H / 640) * def.speed;
+  speed = Math.min(speed, 150);
+  var amp = type === "purple" ? Math.min(56, box.x - L.laneL - def.r, L.laneR - box.x - def.r) : 0;
+  game.clouds.push({
+    type: type, def: def, hp: def.hp,
+    x: box.x + rand(-14, 14), baseX: box.x, amp: Math.max(0, amp),
+    y: L.floorY - 46 - rand(0, 20),
+    vy: speed, wob: rand(0, 6.28), t: 0,
+    r: def.r * L.scale * (type === "red" ? 1.05 : 1)
+  });
+}
+function spawnPowerup() {
+  var types = ["boost", "shield", "scoop", "oxwave"];
+  game.pups.push({
+    type: types[Math.floor(Math.random() * types.length)],
+    x: rand(L.laneL + 30, L.laneR - 30),
+    y: -24, vy: 60 * Math.min(1.3, H / 640), t: 0
+  });
+}
+
+/* =====================================================================
+   ACTIONS: spraying, destroying clouds, penalties, power-ups
+   ===================================================================== */
+function doSpray() {
+  var p = game.player, s = L.scale;
+  p.squeeze = 0.16;                       // trigger squeeze animation timer
+  sfx.spray();
+  var n = reducedMotion ? 4 : 8;
+  var nx = p.x + 6 * s, ny = L.floorY - 122 * s; // nozzle tip
+  for (var i = 0; i < n && game.mists.length < MAX_MIST; i++) {
+    game.mists.push({
+      x: nx + rand(-4, 4), y: ny,
+      vx: rand(-65, 65), vy: rand(-560, -700) * Math.min(1.25, H / 640),
+      r: rand(4.5, 8) * s, life: rand(0.7, 0.95), t: 0
+    });
+  }
+}
+function addSpark(x, y, color, kind) {
+  if (game.sparks.length >= MAX_SPARKS) return;
+  game.sparks.push({
+    x: x, y: y, vx: rand(-130, 130), vy: rand(-160, 40),
+    life: rand(0.4, 0.7), t: 0, color: color, kind: kind || "star",
+    size: rand(2.5, 5) * L.scale
+  });
+}
+function addFloat(x, y, txt, color) {
+  if (game.floats.length > 14) game.floats.shift();
+  game.floats.push({ x: x, y: y, txt: txt, color: color, t: 0, life: 0.9 });
+}
+/* Oxidation burst visuals when a cloud dies. */
+function burstAt(x, y, color) {
+  var n = reducedMotion ? 3 : 12;
+  for (var i = 0; i < n; i++) addSpark(x, y, i % 3 === 0 ? PAPER : (i % 3 === 1 ? TEAL : color));
+  if (!reducedMotion) game.ripples.push({ x: x, y: y, r: 6, max: 46 * L.scale, t: 0, life: 0.35 });
+}
+function destroyCloud(c, viaChain) {
+  var idx = game.clouds.indexOf(c);
+  if (idx < 0) return;
+  game.clouds.splice(idx, 1);
+  addScore(c.def.pts);
+  addFloat(c.x, c.y, "+" + c.def.pts, PAPER);
+  burstAt(c.x, c.y, c.def.color);
+  sfx.pop();
+  // Cat celebrates clouds cleared near it — the cat is a friend, never a target.
+  if (Math.abs(c.x - L.cat.x) < 190 * L.scale) catHappy(0.9);
+  // Oxidation Wave chain: queue a delayed ripple that takes out neighbors.
+  if (viaChain !== undefined && viaChain < 3) {
+    game.chain.push({ x: c.x, y: c.y, depth: viaChain + 1, t: 0.09 });
+  }
+}
+function catHappy(dur) {
+  game.cat.happy = Math.max(game.cat.happy, dur);
+  if (game.sparks.length < MAX_SPARKS && !reducedMotion) {
+    addSpark(L.cat.x + rand(-8, 8), L.floorY - 60 * L.scale, PURPLE, "heart");
+  } else if (reducedMotion) {
+    addSpark(L.cat.x, L.floorY - 60 * L.scale, PURPLE, "heart");
+  }
+}
+/* Wrong-target penalty: the educational core. Gentle nudge, score clamped ≥ 0. */
+function hitObject(o) {
+  o.cool = 1.2; o.flash = 0.45;
+  addScore(-50);
+  addFloat(o.x + o.w / 2, o.y + o.h * 0.35, "-50", "#ff9d94");
+  showMsg("Oops! OdorSol is intended for cat litter only.", "warn");
+  sfx.penalty();
+}
+function collectPowerup(p) {
+  var def = PUP_DEFS[p.type];
+  showMsg(def.label, "good");
+  sfx.power();
+  burstAt(p.x, p.y, TEAL);
+  if (p.type === "boost") {
+    // Clears ALL visible odor clouds.
+    var list = game.clouds.slice();
+    for (var i = 0; i < list.length; i++) destroyCloud(list[i]);
+  } else if (p.type === "shield") {
+    game.shieldT = 10;                   // 10 s immunity from escape losses
+  } else if (p.type === "scoop") {
+    game.scoopT = 10;                    // 10 s slower spawn rate
+  } else if (p.type === "oxwave") {
+    // Chain reaction from the player's position outward.
+    game.chain.push({ x: game.player.x, y: L.floorY - 90 * L.scale, depth: 0, t: 0.01 });
+    if (!reducedMotion) game.ripples.push({ x: game.player.x, y: L.floorY - 90 * L.scale, r: 8, max: 230 * L.scale, t: 0, life: 0.5 });
+  }
+}
+
+/* =====================================================================
+   UPDATE — one simulation step (dt in seconds)
+   ===================================================================== */
+function update(dt) {
+  var s = L.scale, i, j;
+  game.time += dt;
+
+  /* --- player movement + spraying --- */
+  var p = game.player;
+  var dir = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
+  p.x = clamp(p.x + dir * 350 * dt, 34 * s, W - 34 * s);
+  p.squeeze = Math.max(0, p.squeeze - dt);
+  game.sprayCd -= dt;
+  if (keys.spray && game.sprayCd <= 0) { doSpray(); game.sprayCd = 0.22; }
+
+  /* --- timed power-ups --- */
+  if (game.shieldT > 0) game.shieldT -= dt;
+  if (game.scoopT > 0) game.scoopT -= dt;
+  updateBuffBadges();
+
+  /* --- wave spawning --- */
+  if (game.toSpawn > 0) {
+    game.spawnT -= dt * (game.scoopT > 0 ? 0.5 : 1);   // Scoop Bonus slows spawns
+    if (game.spawnT <= 0 && game.clouds.length < MAX_CLOUDS) {
+      spawnCloud();
+      game.toSpawn--;
+      var base = Math.max(0.4, 1.5 - game.wave * 0.1);
+      game.spawnT = base * rand(0.7, 1.3);
+    }
+  } else if (game.clouds.length === 0) {
+    /* --- wave cleared --- */
+    if (game.interT <= 0) {
+      var bonus = 100 + game.wave * 25;
+      addScore(bonus);
+      addFloat(W / 2, H * 0.4, "Wave clear! +" + bonus, TEAL);
+      catHappy(0.1); game.cat.cheer = 1.8;             // cat celebration
+      sfx.waveWin();
+      game.interT = 2.2;
+    } else {
+      game.interT -= dt;
+      if (game.interT <= 0) startWave(game.wave + 1);
+    }
+  }
+
+  /* --- power-up drops (from wave 2 onward) --- */
+  if (game.wave >= 2) {
+    game.pupT -= dt;
+    if (game.pupT <= 0 && game.pups.length < 2) { spawnPowerup(); game.pupT = rand(9, 15); }
+  }
+
+  /* --- odor clouds rise; escaped clouds drain freshness --- */
+  for (i = game.clouds.length - 1; i >= 0; i--) {
+    var c = game.clouds[i];
+    c.t += dt;
+    c.y -= c.vy * dt;
+    if (c.type === "purple" && c.amp > 4) {
+      c.x = c.baseX + Math.sin(c.t * 3.2 + c.wob) * c.amp;   // zigzag drift
+    } else {
+      c.x = c.baseX + Math.sin(c.t * 1.4 + c.wob) * 6;       // gentle wobble
+    }
+    if (c.y < L.escapeY) {
+      game.clouds.splice(i, 1);
+      if (game.shieldT > 0) {
+        game.flashTeal = 0.35;
+        addFloat(c.x, L.escapeY + 14, "Shielded!", TEAL);
+      } else {
+        setFresh(game.fresh - c.def.loss);
+        game.flashRed = 0.4;
+        sfx.escape();
+        if (game.fresh <= 0) { gameOver(); return; }
+      }
+    }
+  }
+
+  /* --- spray mist: move, collide with clouds and no-spray objects --- */
+  for (i = game.mists.length - 1; i >= 0; i--) {
+    var m = game.mists[i];
+    m.t += dt;
+    m.x += m.vx * dt; m.y += m.vy * dt;
+    if (m.t >= m.life || m.y < -20) { game.mists.splice(i, 1); continue; }
+    var hit = false;
+    for (j = game.clouds.length - 1; j >= 0; j--) {
+      var cl = game.clouds[j];
+      var dx = m.x - cl.x, dy = m.y - cl.y;
+      if (dx * dx + dy * dy < (cl.r + m.r) * (cl.r + m.r)) {
+        cl.hp--;
+        if (cl.hp <= 0) destroyCloud(cl, game.chainMode ? 0 : undefined);
+        else { // red cloud first hit: crack it
+          cl.r *= 0.86;
+          addSpark(cl.x, cl.y, PAPER);
+          addFloat(cl.x, cl.y, "Hit!", PAPER);
+          sfx.crack();
+        }
+        hit = true; break;
+      }
+    }
+    if (hit) { game.mists.splice(i, 1); continue; }
+    // Misdirected spray: mist touching couch/carpet/toy/bowl costs points.
+    for (j = 0; j < L.objects.length; j++) {
+      var o = L.objects[j];
+      if (m.x > o.x && m.x < o.x + o.w && m.y > o.y && m.y < o.y + o.h) {
+        if (o.cool <= 0) hitObject(o);
+        game.mists.splice(i, 1); hit = true; break;
+      }
+    }
+  }
+  for (j = 0; j < L.objects.length; j++) {
+    var ob = L.objects[j];
+    if (ob.cool > 0) ob.cool -= dt;
+    if (ob.flash > 0) ob.flash -= dt;
+  }
+
+  /* --- oxidation chain queue: staggered ripples destroy neighbors --- */
+  for (i = game.chain.length - 1; i >= 0; i--) {
+    var ch = game.chain[i];
+    ch.t -= dt;
+    if (ch.t <= 0) {
+      game.chain.splice(i, 1);
+      var radius = (ch.depth === 0 ? 230 : 140) * L.scale;
+      var victims = game.clouds.filter(function (cc) {
+        var ddx = cc.x - ch.x, ddy = cc.y - ch.y;
+        return ddx * ddx + ddy * ddy < radius * radius;
+      });
+      for (j = 0; j < victims.length; j++) destroyCloud(victims[j], ch.depth);
+      if (victims.length && !reducedMotion) {
+        game.ripples.push({ x: ch.x, y: ch.y, r: 8, max: radius, t: 0, life: 0.4 });
+      }
+    }
+  }
+
+  /* --- power-up pickups fall toward the floor; player catches them --- */
+  for (i = game.pups.length - 1; i >= 0; i--) {
+    var pu = game.pups[i];
+    pu.t += dt; pu.y += pu.vy * dt;
+    var pdx = pu.x - p.x, pdy = pu.y - (L.floorY - 62 * s);
+    if (pdx * pdx + pdy * pdy < (58 * s) * (58 * s)) {
+      game.pups.splice(i, 1); collectPowerup(pu);
+    } else if (pu.y > L.floorY + 20) {
+      game.pups.splice(i, 1);
+    }
+  }
+
+  /* --- decorative particles --- */
+  for (i = game.sparks.length - 1; i >= 0; i--) {
+    var sp = game.sparks[i];
+    sp.t += dt; sp.x += sp.vx * dt; sp.y += sp.vy * dt; sp.vy += 60 * dt;
+    if (sp.kind === "heart") { sp.vy = -55; sp.vx *= 0.98; }
+    if (sp.t >= sp.life) game.sparks.splice(i, 1);
+  }
+  for (i = game.floats.length - 1; i >= 0; i--) {
+    var fl = game.floats[i];
+    fl.t += dt; fl.y -= 42 * dt;
+    if (fl.t >= fl.life) game.floats.splice(i, 1);
+  }
+  for (i = game.ripples.length - 1; i >= 0; i--) {
+    var rp = game.ripples[i];
+    rp.t += dt; rp.r = rp.max * (rp.t / rp.life);
+    if (rp.t >= rp.life) game.ripples.splice(i, 1);
+  }
+
+  /* --- cat mood + blink timers --- */
+  var cat = game.cat;
+  if (cat.happy > 0) cat.happy -= dt;
+  if (cat.cheer > 0) cat.cheer -= dt;
+  cat.nextBlink -= dt;
+  if (cat.nextBlink <= 0) { cat.blink = 0.14; cat.nextBlink = rand(2.4, 5); }
+  if (cat.blink > 0) cat.blink -= dt;
+
+  if (game.flashRed > 0) game.flashRed -= dt;
+  if (game.flashTeal > 0) game.flashTeal -= dt;
+}
+
+/* HUD badges showing active timed power-ups. */
+var lastBadges = "";
+function updateBuffBadges() {
+  var txt = "";
+  if (game.shieldT > 0) txt += "<span class='buff'>SHIELD " + Math.ceil(game.shieldT) + "s</span>";
+  if (game.scoopT > 0) txt += "<span class='buff'>SCOOP " + Math.ceil(game.scoopT) + "s</span>";
+  if (txt !== lastBadges) { buffsBox.innerHTML = txt; lastBadges = txt; }
+}
+
+/* =====================================================================
+   DRAWING — everything gameplay lives on the canvas
+   ===================================================================== */
+function drawFrame(t) {
+  drawRoom();
+  drawObjects();
+  drawLitterBoxes();
+  drawCat();
+  drawClouds();
+  drawPowerups();
+  drawPlayer();
+  drawParticles();
+  drawFlashes();
+}
+
+/* Room: dark-to-clean gradient wall, floor, and simple decor. */
+function drawRoom() {
+  var g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, "#0b1118");
+  g.addColorStop(0.55, "#1b2836");
+  g.addColorStop(0.85, "#2b3d4d");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+  // Floor: cleaner, lighter band.
+  var fg = ctx.createLinearGradient(0, L.floorY, 0, H);
+  fg.addColorStop(0, "#7f939d");
+  fg.addColorStop(1, "#5c6d78");
+  ctx.fillStyle = fg;
+  ctx.fillRect(0, L.floorY, W, H - L.floorY);
+  ctx.fillStyle = "rgba(245,245,242,.25)";
+  ctx.fillRect(0, L.floorY, W, 3); // baseboard highlight
+  // Window (upper left) with a hint of night sky.
+  var s = L.scale;
+  var wx = W * 0.06, wy = H * 0.13, ww = Math.min(110 * s, W * 0.16), wh = 130 * s;
+  ctx.fillStyle = "#0e1722"; ctx.fillRect(wx, wy, ww, wh);
+  ctx.strokeStyle = "#3d4f5e"; ctx.lineWidth = 4;
+  ctx.strokeRect(wx, wy, ww, wh);
+  ctx.beginPath(); ctx.moveTo(wx + ww / 2, wy); ctx.lineTo(wx + ww / 2, wy + wh);
+  ctx.moveTo(wx, wy + wh / 2); ctx.lineTo(wx + ww, wy + wh / 2); ctx.stroke();
+  ctx.fillStyle = "#cfe3ea";
+  ctx.beginPath(); ctx.arc(wx + ww * 0.7, wy + wh * 0.25, 9 * s, 0, 6.29); ctx.fill();
+  // Framed "molecule" art on the right wall — science vibe.
+  var ax = W * 0.86, ay = H * 0.14, aw = Math.min(70 * s, W * 0.1);
+  ctx.strokeStyle = "#3d4f5e"; ctx.lineWidth = 3;
+  ctx.strokeRect(ax, ay, aw, aw * 0.8);
+  ctx.strokeStyle = TEAL; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(ax + aw * 0.25, ay + aw * 0.5); ctx.lineTo(ax + aw * 0.5, ay + aw * 0.25);
+  ctx.lineTo(ax + aw * 0.75, ay + aw * 0.5); ctx.stroke();
+  ctx.fillStyle = PURPLE;
+  [[0.25, 0.5], [0.5, 0.25], [0.75, 0.5]].forEach(function (pt) {
+    ctx.beginPath(); ctx.arc(ax + aw * pt[0], ay + aw * pt[1], 3.5, 0, 6.29); ctx.fill();
+  });
+  // Escape zone: subtle "rest of the house" glow at the top.
+  var eg = ctx.createLinearGradient(0, 0, 0, L.escapeY + 26);
+  eg.addColorStop(0, "rgba(44,169,184,.14)");
+  eg.addColorStop(1, "rgba(44,169,184,0)");
+  ctx.fillStyle = eg;
+  ctx.fillRect(0, 0, W, L.escapeY + 26);
+}
+
+/* Rounded-rect path helper. */
+function rr(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+/* No-spray objects: couch + rolled carpet (left), toy + food bowl on
+   wall shelves (right). Flashing red briefly when mis-sprayed. */
+function drawObjects() {
+  var s = L.scale;
+  for (var i = 0; i < L.objects.length; i++) {
+    var o = L.objects[i];
+    ctx.save();
+    if (o.name === "couch") {
+      ctx.fillStyle = "#5d5a75";
+      rr(o.x, o.y, o.w, o.h * 0.62, 12 * s); ctx.fill();               // tall back
+      ctx.fillStyle = "#6c6987";
+      rr(o.x - 2, o.y + o.h * 0.52, o.w + 4, o.h * 0.3, 10 * s); ctx.fill(); // seat
+      ctx.fillStyle = "#7a7694";                                       // cushions
+      rr(o.x + 4, o.y + o.h * 0.54, o.w / 2 - 6, o.h * 0.16, 7 * s); ctx.fill();
+      rr(o.x + o.w / 2 + 2, o.y + o.h * 0.54, o.w / 2 - 6, o.h * 0.16, 7 * s); ctx.fill();
+      ctx.fillStyle = "#4a4860";                                       // legs
+      ctx.fillRect(o.x + 4, o.y + o.h - 8, 7, 8);
+      ctx.fillRect(o.x + o.w - 11, o.y + o.h - 8, 7, 8);
+    } else if (o.name === "carpet") {
+      // Rolled-up carpet leaning on the wall.
+      ctx.fillStyle = "#8a7263";
+      rr(o.x, o.y, o.w, o.h, o.w / 2); ctx.fill();
+      ctx.strokeStyle = "#6d594c"; ctx.lineWidth = 2;
+      for (var k = 1; k < 4; k++) {
+        ctx.beginPath();
+        ctx.moveTo(o.x + 2, o.y + o.h * k / 4);
+        ctx.lineTo(o.x + o.w - 2, o.y + o.h * k / 4 - 6);
+        ctx.stroke();
+      }
+      ctx.fillStyle = "#a08974";                                       // spiral end
+      ctx.beginPath(); ctx.ellipse(o.x + o.w / 2, o.y + o.w / 2, o.w / 2 - 2, o.w / 2.6, 0, 0, 6.29); ctx.fill();
+      ctx.strokeStyle = "#6d594c"; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(o.x + o.w / 2, o.y + o.w / 2, o.w / 5, 0, 5); ctx.stroke();
+    } else if (o.name === "toy") {
+      // Wall shelf with a yarn-ball cat toy.
+      ctx.fillStyle = "#4a4235";
+      ctx.fillRect(o.x - 4, o.y + o.h - 8, o.w + 8, 8);
+      var bx = o.x + o.w / 2, by = o.y + o.h - 8 - 20 * s, br = 18 * s;
+      ctx.fillStyle = "#c96f8e";
+      ctx.beginPath(); ctx.arc(bx, by, br, 0, 6.29); ctx.fill();
+      ctx.strokeStyle = "#a34e6e"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(bx, by, br * 0.6, 0.5, 3.4); ctx.stroke();
+      ctx.beginPath(); ctx.arc(bx, by, br * 0.85, 2.8, 5.6); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(bx + br * 0.8, by + br * 0.5);       // trailing yarn
+      ctx.quadraticCurveTo(bx + br * 1.7, by + br, bx + br * 1.2, by + br * 1.6);
+      ctx.stroke();
+    } else if (o.name === "bowl") {
+      // Wall stand with a food bowl.
+      ctx.fillStyle = "#4a4235";
+      ctx.fillRect(o.x - 4, o.y + o.h - 8, o.w + 8, 8);
+      var cx = o.x + o.w / 2, cy = o.y + o.h - 8;
+      ctx.fillStyle = "#c98a4b";
+      ctx.beginPath();
+      ctx.moveTo(cx - 22 * s, cy - 22 * s);
+      ctx.quadraticCurveTo(cx, cy + 10 * s, cx + 22 * s, cy - 22 * s);
+      ctx.closePath(); ctx.fill();
+      ctx.fillStyle = "#8f5f2e";
+      ctx.beginPath(); ctx.ellipse(cx, cy - 22 * s, 22 * s, 6 * s, 0, 0, 6.29); ctx.fill();
+      ctx.fillStyle = "#e0b070";                                       // kibble
+      for (var kk = 0; kk < 4; kk++) {
+        ctx.beginPath(); ctx.arc(cx - 12 * s + kk * 8 * s, cy - 23 * s, 2.6 * s, 0, 6.29); ctx.fill();
+      }
+    }
+    if (o.flash > 0) { // brief red outline when mis-sprayed
+      ctx.strokeStyle = "rgba(226,87,76," + Math.min(1, o.flash * 2.5) + ")";
+      ctx.lineWidth = 3;
+      rr(o.x - 3, o.y - 3, o.w + 6, o.h + 6, 8); ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+function drawLitterBoxes() {
+  var s = L.scale;
+  for (var i = 0; i < L.boxes.length; i++) {
+    var b = L.boxes[i], w = b.w, x = b.x - w / 2, y = L.floorY - 30 * s;
+    ctx.fillStyle = "#38505c";                       // tray
+    ctx.beginPath();
+    ctx.moveTo(x, y); ctx.lineTo(x + w, y);
+    ctx.lineTo(x + w - 8 * s, y + 30 * s); ctx.lineTo(x + 8 * s, y + 30 * s);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = "#e6e2d4";                       // litter fill
+    ctx.beginPath(); ctx.ellipse(b.x, y + 4 * s, w / 2 - 6 * s, 7 * s, 0, 0, 6.29); ctx.fill();
+    ctx.fillStyle = "#c9c4b0";                       // litter speckles
+    for (var k = 0; k < 5; k++) {
+      ctx.beginPath();
+      ctx.arc(b.x - w / 3 + (k * w) / 7 + (i ? 3 : 0), y + 3 * s + (k % 2) * 4 * s, 1.8 * s, 0, 6.29);
+      ctx.fill();
+    }
+    ctx.strokeStyle = "#2a3d47"; ctx.lineWidth = 2;  // rim
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + w, y); ctx.stroke();
+  }
+}
+
+/* The cat mascot — pure positivity: bounces, blinks, cheers. Never a target. */
+function drawCat() {
+  var s = L.scale, cat = game.cat;
+  var x = L.cat.x, y = L.cat.y;
+  var bounce = 0;
+  if (cat.cheer > 0) bounce = Math.abs(Math.sin(game.time * 12)) * 12 * s;
+  else if (cat.happy > 0) bounce = Math.abs(Math.sin(game.time * 9)) * 6 * s;
+  if (reducedMotion) bounce = cat.happy > 0 || cat.cheer > 0 ? 4 * s : 0;
+  y -= bounce;
+  ctx.save();
+  // Tail (sways gently).
+  var sway = Math.sin(game.time * 2.2) * 8 * s;
+  ctx.strokeStyle = "#52525c"; ctx.lineWidth = 7 * s; ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(x + 18 * s, y - 12 * s);
+  ctx.quadraticCurveTo(x + 34 * s, y - 30 * s, x + 30 * s + sway, y - 48 * s);
+  ctx.stroke();
+  // Body + head.
+  ctx.fillStyle = "#52525c";
+  ctx.beginPath(); ctx.ellipse(x, y - 15 * s, 21 * s, 16 * s, 0, 0, 6.29); ctx.fill();
+  ctx.beginPath(); ctx.arc(x, y - 38 * s, 13.5 * s, 0, 6.29); ctx.fill();
+  // Ears (outer + inner).
+  ctx.beginPath();
+  ctx.moveTo(x - 12 * s, y - 44 * s); ctx.lineTo(x - 9 * s, y - 56 * s); ctx.lineTo(x - 3 * s, y - 48 * s);
+  ctx.moveTo(x + 12 * s, y - 44 * s); ctx.lineTo(x + 9 * s, y - 56 * s); ctx.lineTo(x + 3 * s, y - 48 * s);
+  ctx.fill();
+  ctx.fillStyle = PURPLE;
+  ctx.beginPath();
+  ctx.moveTo(x - 10 * s, y - 46 * s); ctx.lineTo(x - 8.6 * s, y - 52 * s); ctx.lineTo(x - 5.4 * s, y - 48 * s);
+  ctx.closePath(); ctx.fill();
+  // Chest patch + teal collar (brand touch).
+  ctx.fillStyle = "#e8e8ea";
+  ctx.beginPath(); ctx.ellipse(x, y - 12 * s, 9 * s, 8 * s, 0, 0, 6.29); ctx.fill();
+  ctx.fillStyle = TEAL;
+  ctx.fillRect(x - 10 * s, y - 28 * s, 20 * s, 4 * s);
+  // Face: happy arc-eyes when celebrating, round eyes (with blink) otherwise.
+  var happy = cat.happy > 0 || cat.cheer > 0;
+  ctx.strokeStyle = "#F5F5F2"; ctx.lineWidth = 2 * s; ctx.lineCap = "round";
+  if (happy) {
+    ctx.beginPath(); ctx.arc(x - 5 * s, y - 39 * s, 3 * s, Math.PI, 0);
+    ctx.moveTo(x + 8 * s, y - 39 * s); ctx.arc(x + 5 * s, y - 39 * s, 3 * s, Math.PI, 0);
+    ctx.stroke();
+  } else if (cat.blink > 0) {
+    ctx.beginPath();
+    ctx.moveTo(x - 8 * s, y - 39 * s); ctx.lineTo(x - 2 * s, y - 39 * s);
+    ctx.moveTo(x + 2 * s, y - 39 * s); ctx.lineTo(x + 8 * s, y - 39 * s);
+    ctx.stroke();
+  } else {
+    ctx.fillStyle = "#F5F5F2";
+    ctx.beginPath(); ctx.arc(x - 5 * s, y - 39 * s, 2.6 * s, 0, 6.29);
+    ctx.arc(x + 5 * s, y - 39 * s, 2.6 * s, 0, 6.29); ctx.fill();
+    ctx.fillStyle = INK;
+    ctx.beginPath(); ctx.arc(x - 5 * s, y - 39 * s, 1.2 * s, 0, 6.29);
+    ctx.arc(x + 5 * s, y - 39 * s, 1.2 * s, 0, 6.29); ctx.fill();
+  }
+  // Nose + whiskers.
+  ctx.fillStyle = PURPLE;
+  ctx.beginPath(); ctx.arc(x, y - 34 * s, 1.6 * s, 0, 6.29); ctx.fill();
+  ctx.strokeStyle = "rgba(245,245,242,.6)"; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(x - 4 * s, y - 34 * s); ctx.lineTo(x - 13 * s, y - 35 * s);
+  ctx.moveTo(x + 4 * s, y - 34 * s); ctx.lineTo(x + 13 * s, y - 35 * s);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/* Odor clouds — each type gets a distinct SHAPE + ICON, not just color. */
+function drawClouds() {
+  for (var i = 0; i < game.clouds.length; i++) {
+    var c = game.clouds[i], r = c.r;
+    ctx.save();
+    ctx.translate(c.x, c.y);
+    ctx.fillStyle = c.def.color;
+    ctx.strokeStyle = c.def.edge;
+    ctx.lineWidth = 2;
+    ctx.globalAlpha = 0.92;
+    if (c.type === "green") {
+      // Puffy three-lobed cloud with stink squiggles.
+      ctx.beginPath();
+      ctx.arc(-r * 0.5, r * 0.15, r * 0.55, 0, 6.29);
+      ctx.arc(0, -r * 0.2, r * 0.7, 0, 6.29);
+      ctx.arc(r * 0.5, r * 0.15, r * 0.55, 0, 6.29);
+      ctx.fill(); ctx.stroke();
+      ctx.strokeStyle = "rgba(26,26,26,.55)"; ctx.lineWidth = 2; ctx.lineCap = "round";
+      for (var q = -1; q <= 1; q++) {
+        ctx.beginPath();
+        ctx.moveTo(q * r * 0.35, r * 0.05);
+        ctx.quadraticCurveTo(q * r * 0.35 + 4, -r * 0.15, q * r * 0.35, -r * 0.35);
+        ctx.stroke();
+      }
+    } else if (c.type === "yellow") {
+      // Spiky burst with a lightning bolt: fast ammonia.
+      ctx.beginPath();
+      for (var k = 0; k < 10; k++) {
+        var a = (k / 10) * Math.PI * 2;
+        var rad = k % 2 === 0 ? r : r * 0.62;
+        ctx.lineTo(Math.cos(a) * rad, Math.sin(a) * rad);
+      }
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = "rgba(26,26,26,.7)";
+      ctx.beginPath();
+      ctx.moveTo(2, -r * 0.5); ctx.lineTo(-r * 0.28, r * 0.08); ctx.lineTo(-2, r * 0.08);
+      ctx.lineTo(-r * 0.12, r * 0.5); ctx.lineTo(r * 0.3, -r * 0.08); ctx.lineTo(3, -r * 0.08);
+      ctx.closePath(); ctx.fill();
+    } else if (c.type === "purple") {
+      // Swirl blob with a "?": zigzagging mystery stink.
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.8, 0, 6.29);
+      ctx.arc(-r * 0.55, -r * 0.3, r * 0.45, 0, 6.29);
+      ctx.arc(r * 0.55, r * 0.25, r * 0.4, 0, 6.29);
+      ctx.fill(); ctx.stroke();
+      ctx.strokeStyle = "rgba(26,26,26,.55)"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(-r * 0.1, r * 0.1, r * 0.35, 0.6, 5.2); ctx.stroke();
+      ctx.fillStyle = "rgba(26,26,26,.75)";
+      ctx.font = "bold " + Math.round(r * 0.85) + "px Arial";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText("?", r * 0.05, -r * 0.05);
+    } else { // red mega odor
+      ctx.beginPath();
+      ctx.arc(-r * 0.42, 0, r * 0.68, 0, 6.29);
+      ctx.arc(r * 0.42, 0, r * 0.68, 0, 6.29);
+      ctx.arc(0, -r * 0.4, r * 0.62, 0, 6.29);
+      ctx.fill(); ctx.stroke();
+      ctx.strokeStyle = "rgba(26,26,26,.75)"; ctx.lineWidth = 2.5; ctx.lineCap = "round";
+      // Angry "××" eyes.
+      [-r * 0.35, r * 0.35].forEach(function (ex) {
+        ctx.beginPath();
+        ctx.moveTo(ex - 4, -r * 0.28 - 4); ctx.lineTo(ex + 4, -r * 0.28 + 4);
+        ctx.moveTo(ex + 4, -r * 0.28 - 4); ctx.lineTo(ex - 4, -r * 0.28 + 4);
+        ctx.stroke();
+      });
+      // HP pips: how many hits remain.
+      ctx.fillStyle = "rgba(245,245,242,.9)";
+      for (var hpi = 0; hpi < c.hp; hpi++) {
+        ctx.beginPath(); ctx.arc(-6 + hpi * 12, r * 0.32, 3.4, 0, 6.29); ctx.fill();
+      }
+      if (c.hp === 1) { // crack line after first hit
+        ctx.strokeStyle = "rgba(245,245,242,.7)"; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(-r * 0.1, -r * 0.6);
+        ctx.lineTo(r * 0.1, -r * 0.15); ctx.lineTo(-r * 0.08, r * 0.3); ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+}
+
+function drawPowerups() {
+  var s = L.scale;
+  for (var i = 0; i < game.pups.length; i++) {
+    var p = game.pups[i];
+    var bob = reducedMotion ? 0 : Math.sin(p.t * 5) * 3;
+    ctx.save();
+    ctx.translate(p.x, p.y + bob);
+    // Gradient bubble in brand colors.
+    var g = ctx.createLinearGradient(-16 * s, -16 * s, 16 * s, 16 * s);
+    g.addColorStop(0, TEAL); g.addColorStop(1, PURPLE);
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(0, 0, 17 * s, 0, 6.29); ctx.fill();
+    ctx.strokeStyle = "rgba(245,245,242,.85)"; ctx.lineWidth = 2.5;
+    ctx.stroke();
+    ctx.fillStyle = PAPER; ctx.strokeStyle = PAPER;
+    ctx.lineWidth = 2; ctx.lineCap = "round";
+    if (p.type === "boost") {          // droplet icon
+      drawDroplet(0, 1 * s, 7 * s, PAPER);
+    } else if (p.type === "shield") {  // shield icon
+      ctx.beginPath();
+      ctx.moveTo(0, -8 * s); ctx.lineTo(7 * s, -4 * s); ctx.lineTo(7 * s, 2 * s);
+      ctx.quadraticCurveTo(7 * s, 8 * s, 0, 10 * s);
+      ctx.quadraticCurveTo(-7 * s, 8 * s, -7 * s, 2 * s);
+      ctx.lineTo(-7 * s, -4 * s); ctx.closePath(); ctx.fill();
+    } else if (p.type === "scoop") {   // litter scoop icon
+      ctx.beginPath();
+      ctx.moveTo(-7 * s, 2 * s); ctx.lineTo(2 * s, 2 * s);
+      ctx.lineTo(2 * s, 8 * s); ctx.lineTo(-7 * s, 8 * s); ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(2 * s, 3 * s); ctx.lineTo(9 * s, -7 * s); ctx.stroke();
+    } else {                            // oxidation wave: ripple rings
+      ctx.beginPath(); ctx.arc(0, 0, 3.5 * s, 0, 6.29); ctx.fill();
+      ctx.beginPath(); ctx.arc(0, 0, 7.5 * s, 0, 6.29); ctx.stroke();
+      ctx.beginPath(); ctx.arc(0, 0, 11 * s, 0.6, 2.5); ctx.stroke();
+      ctx.beginPath(); ctx.arc(0, 0, 11 * s, 3.7, 5.7); ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+/* Teal→purple gradient droplet (the OdorSol logo mark). */
+function drawDroplet(x, y, r, solidColor) {
+  ctx.save();
+  ctx.translate(x, y);
+  if (solidColor) {
+    ctx.fillStyle = solidColor;
+  } else {
+    var g = ctx.createLinearGradient(0, -1.5 * r, 0, 1.3 * r);
+    g.addColorStop(0, TEAL); g.addColorStop(1, PURPLE);
+    ctx.fillStyle = g;
+  }
+  ctx.beginPath();
+  ctx.moveTo(0, -1.45 * r);
+  ctx.bezierCurveTo(0.16 * r, -0.72 * r, r, -0.32 * r, r, 0.35 * r);
+  ctx.arc(0, 0.35 * r, r, 0, Math.PI, false);
+  ctx.bezierCurveTo(-r, -0.32 * r, -0.16 * r, -0.72 * r, 0, -1.45 * r);
+  ctx.fill();
+  ctx.restore();
+}
+
+/* The player: the OdorSol bottle, drawn entirely from shapes so the
+   trigger can visibly squeeze on every spray. x = center, bottom on floor. */
+function drawPlayer() {
+  var s = L.scale, p = game.player;
+  var x = p.x, y = L.floorY;
+  var sq = p.squeeze > 0 ? Math.sin((p.squeeze / 0.16) * Math.PI) : 0; // 0..1 squeeze
+  ctx.save();
+  // Shield glow while Fresh Home Shield is active.
+  if (game.shieldT > 0) {
+    ctx.strokeStyle = "rgba(44,169,184," + (0.5 + 0.3 * Math.sin(game.time * 6)) + ")";
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(x, y - 60 * s, 62 * s, 0, 6.29); ctx.stroke();
+  }
+  ctx.fillStyle = "rgba(0,0,0,.3)";                          // floor shadow
+  ctx.beginPath(); ctx.ellipse(x, y + 4, 30 * s, 6 * s, 0, 0, 6.29); ctx.fill();
+
+  var bw = 54 * s, bodyH = 82 * s, shW = 34 * s;             // body dims
+  var bodyTop = y - bodyH;
+  // Body: rounded bottom, sides tapering into a narrower shoulder.
+  ctx.fillStyle = INK;
+  ctx.beginPath();
+  ctx.moveTo(x - bw / 2, y - 9 * s);
+  ctx.quadraticCurveTo(x - bw / 2, y, x - bw / 2 + 9 * s, y);
+  ctx.lineTo(x + bw / 2 - 9 * s, y);
+  ctx.quadraticCurveTo(x + bw / 2, y, x + bw / 2, y - 9 * s);
+  ctx.lineTo(x + bw / 2, bodyTop + 26 * s);
+  ctx.quadraticCurveTo(x + bw / 2, bodyTop + 2 * s, x + shW / 2, bodyTop);
+  ctx.lineTo(x - shW / 2, bodyTop);
+  ctx.quadraticCurveTo(x - bw / 2, bodyTop + 2 * s, x - bw / 2, bodyTop + 26 * s);
+  ctx.closePath(); ctx.fill();
+  // Subtle highlight down the left edge for a plastic sheen.
+  ctx.strokeStyle = "rgba(245,245,242,.14)"; ctx.lineWidth = 2 * s;
+  ctx.beginPath();
+  ctx.moveTo(x - bw / 2 + 4 * s, y - 12 * s);
+  ctx.lineTo(x - bw / 2 + 4 * s, bodyTop + 18 * s);
+  ctx.stroke();
+  // Neck: narrower cylinder with ribbed threads.
+  var neckH = 13 * s, neckTop = bodyTop - neckH;
+  ctx.fillStyle = INK;
+  ctx.fillRect(x - 8.5 * s, neckTop, 17 * s, neckH + 1);
+  ctx.strokeStyle = "#3d3d3d"; ctx.lineWidth = 1.4;
+  for (var rIdx = 0; rIdx < 3; rIdx++) {
+    var ry = neckTop + 3 * s + rIdx * 3.6 * s;
+    ctx.beginPath(); ctx.moveTo(x - 8.5 * s, ry); ctx.lineTo(x + 8.5 * s, ry); ctx.stroke();
+  }
+  // Trigger head: angular hook with a forward-tilted nozzle tip on top.
+  var headH = 15 * s, headTop = neckTop - headH;
+  ctx.fillStyle = INK;
+  ctx.beginPath();
+  ctx.moveTo(x - 13 * s, neckTop);
+  ctx.lineTo(x - 13 * s, headTop);
+  ctx.lineTo(x + 5 * s, headTop);
+  ctx.lineTo(x + 13 * s, headTop + 6 * s);
+  ctx.lineTo(x + 13 * s, neckTop);
+  ctx.closePath(); ctx.fill();
+  // Nozzle tip (spray comes from here). Puffs up slightly on squeeze.
+  ctx.fillRect(x + 1 * s, headTop - 6 * s - sq * 1.5 * s, 9 * s, 7 * s);
+  // Trigger lever: pulled back toward the neck while spraying.
+  ctx.strokeStyle = INK; ctx.lineWidth = 4.5 * s; ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(x + 11 * s, headTop + 9 * s);
+  ctx.quadraticCurveTo(
+    x + 17 * s - sq * 9 * s, neckTop + 5 * s,
+    x + 10 * s - sq * 7 * s, neckTop + 15 * s
+  );
+  ctx.stroke();
+  // Mist puff at the nozzle while squeezing.
+  if (sq > 0.15 && !reducedMotion) {
+    ctx.fillStyle = "rgba(200,240,248," + sq * 0.5 + ")";
+    ctx.beginPath(); ctx.arc(x + 6 * s, headTop - 12 * s, 6 * s * sq + 2, 0, 6.29); ctx.fill();
+  }
+  // Label: light rounded rectangle over the lower two-thirds of the body.
+  var lw = bw - 10 * s, lx = x - lw / 2, lTop = y - 60 * s, lh = 54 * s;
+  ctx.fillStyle = PAPER;
+  rr(lx, lTop, lw, lh, 5 * s); ctx.fill();
+  // Brand droplet + wordmark + product line.
+  drawDroplet(x, lTop + 11 * s, 5.2 * s);
+  ctx.fillStyle = PAPER_INK;
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.font = "800 " + Math.max(8, 10.5 * s) + "px Arial, sans-serif";
+  ctx.fillText("OdorSol", x, lTop + 25 * s);
+  ctx.globalAlpha = 0.85;
+  ctx.font = "600 " + Math.max(4.6, 5.2 * s) + "px Arial, sans-serif";
+  ctx.fillText("Cat Litter", x, lTop + 34 * s);
+  ctx.fillText("Deodorizing Spray", x, lTop + 40.5 * s);
+  ctx.globalAlpha = 1;
+  // Teal→purple accent strip along the label bottom.
+  var lg = ctx.createLinearGradient(lx, 0, lx + lw, 0);
+  lg.addColorStop(0, TEAL); lg.addColorStop(1, PURPLE);
+  ctx.fillStyle = lg;
+  ctx.fillRect(lx + 2 * s, lTop + lh - 6 * s, lw - 4 * s, 3.5 * s);
+  ctx.restore();
+}
+
+/* Mist, sparkles, hearts, ripples, floating score text. */
+function drawParticles() {
+  var i;
+  ctx.save();
+  // Clean blue/white spray mist.
+  for (i = 0; i < game.mists.length; i++) {
+    var m = game.mists[i];
+    var a = 1 - m.t / m.life;
+    ctx.fillStyle = "rgba(206,240,248," + (0.65 * a) + ")";
+    ctx.beginPath(); ctx.arc(m.x, m.y, m.r * (1 + m.t), 0, 6.29); ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255," + (0.5 * a) + ")";
+    ctx.beginPath(); ctx.arc(m.x, m.y, m.r * 0.45, 0, 6.29); ctx.fill();
+  }
+  // Oxidation sparkles + cat hearts.
+  for (i = 0; i < game.sparks.length; i++) {
+    var sp = game.sparks[i];
+    var al = 1 - sp.t / sp.life;
+    ctx.globalAlpha = al;
+    ctx.fillStyle = sp.color;
+    if (sp.kind === "heart") {
+      var hs = sp.size * 1.6;
+      ctx.beginPath();
+      ctx.moveTo(sp.x, sp.y + hs * 0.8);
+      ctx.bezierCurveTo(sp.x - hs, sp.y, sp.x - hs * 0.6, sp.y - hs, sp.x, sp.y - hs * 0.3);
+      ctx.bezierCurveTo(sp.x + hs * 0.6, sp.y - hs, sp.x + hs, sp.y, sp.x, sp.y + hs * 0.8);
+      ctx.fill();
+    } else {
+      // Four-point sparkle.
+      ctx.beginPath();
+      ctx.moveTo(sp.x, sp.y - sp.size * 2);
+      ctx.lineTo(sp.x + sp.size * 0.6, sp.y);
+      ctx.lineTo(sp.x, sp.y + sp.size * 2);
+      ctx.lineTo(sp.x - sp.size * 0.6, sp.y);
+      ctx.closePath(); ctx.fill();
+    }
+  }
+  ctx.globalAlpha = 1;
+  // Expanding oxidation ripples.
+  for (i = 0; i < game.ripples.length; i++) {
+    var rp = game.ripples[i];
+    ctx.strokeStyle = "rgba(44,169,184," + (1 - rp.t / rp.life) * 0.8 + ")";
+    ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.arc(rp.x, rp.y, rp.r, 0, 6.29); ctx.stroke();
+  }
+  // Floating score text.
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  for (i = 0; i < game.floats.length; i++) {
+    var fl = game.floats[i];
+    ctx.globalAlpha = 1 - fl.t / fl.life;
+    ctx.fillStyle = fl.color;
+    ctx.font = "800 " + Math.round(15 * L.scale + 2) + "px Arial, sans-serif";
+    ctx.fillText(fl.txt, fl.x, fl.y);
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+/* Top-of-screen flashes: red when a cloud escapes, teal when shielded. */
+function drawFlashes() {
+  if (game.flashRed > 0) {
+    var g = ctx.createLinearGradient(0, 0, 0, 90);
+    g.addColorStop(0, "rgba(226,87,76," + game.flashRed * 1.2 + ")");
+    g.addColorStop(1, "rgba(226,87,76,0)");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, 90);
+  }
+  if (game.flashTeal > 0) {
+    var g2 = ctx.createLinearGradient(0, 0, 0, 90);
+    g2.addColorStop(0, "rgba(44,169,184," + game.flashTeal * 1.2 + ")");
+    g2.addColorStop(1, "rgba(44,169,184,0)");
+    ctx.fillStyle = g2; ctx.fillRect(0, 0, W, 90);
+  }
+}
+
+/* =====================================================================
+   MAIN LOOP + STATE MACHINE (start | playing | paused | gameover)
+   ===================================================================== */
+function loop(now) {
+  if (game.state !== "playing") { game.raf = 0; return; }
+  var dt = Math.min((now - game.last) / 1000, 0.05); // clamp big tab-switch gaps
+  game.last = now;
+  update(dt);
+  if (game.state === "playing") {                    // update() may end the game
+    drawFrame(now);
+    game.raf = requestAnimationFrame(loop);
+  }
+}
+function startLoop() {
+  stopLoop();
+  game.last = performance.now();
+  game.raf = requestAnimationFrame(loop);
+}
+function stopLoop() {
+  if (game.raf) { cancelAnimationFrame(game.raf); game.raf = 0; }
+}
+
+/* Wipe every entity list and timer so nothing leaks between rounds. */
+function resetGame() {
+  stopLoop();
+  clearMsgs();
+  game.score = 0; scoreVal.textContent = "0";
+  setFresh(100);
+  game.clouds.length = 0; game.mists.length = 0; game.sparks.length = 0;
+  game.floats.length = 0; game.pups.length = 0; game.ripples.length = 0;
+  game.chain.length = 0;
+  game.shieldT = 0; game.scoopT = 0; game.pupT = 12; game.sprayCd = 0;
+  game.time = 0; game.flashRed = 0; game.flashTeal = 0;
+  game.player.x = W / 2; game.player.squeeze = 0;
+  game.cat.happy = 0; game.cat.cheer = 0; game.cat.blink = 0; game.cat.nextBlink = 3;
+  keys.left = keys.right = keys.spray = false;
+  lastBadges = ""; buffsBox.innerHTML = "";
+}
+function startGame() {
+  audio.init();                        // user gesture → audio allowed now
+  sfx.click();
+  startScreen.classList.remove("on");
+  overScreen.classList.remove("on");
+  pauseScreen.classList.remove("on");
+  hud.classList.add("on");
+  touchBox.classList.add("on");
+  resetGame();
+  game.state = "playing";
+  startWave(1);
+  startLoop();
+}
+function pauseGame() {
+  if (game.state !== "playing") return;
+  game.state = "paused";
+  stopLoop();
+  pauseScreen.classList.add("on");
+  el("btnPause").textContent = "▶";
+}
+function resumeGame() {
+  if (game.state !== "paused") return;
+  sfx.click();
+  pauseScreen.classList.remove("on");
+  el("btnPause").textContent = "⏸";
+  game.state = "playing";
+  startLoop();
+}
+function ratingFor(score) {
+  if (score >= 3000) return "EcoPurrfect Legend";
+  if (score >= 1500) return "HOCl Hero";
+  if (score >= 500) return "Freshness Fighter";
+  return "Stinky Situation";
+}
+function gameOver() {
+  game.state = "gameover";
+  stopLoop();
+  clearMsgs();
+  sfx.over();
+  el("finalScore").textContent = game.score;
+  el("finalWave").textContent = game.wave;
+  el("ratingTxt").textContent = ratingFor(game.score);
+  hud.classList.remove("on");
+  touchBox.classList.remove("on");
+  drawFrame(0);                        // leave the final scene behind the overlay
+  overScreen.classList.add("on");
+}
+
+/* =====================================================================
+   INPUT — keyboard, mouse, and thumb-sized touch controls
+   ===================================================================== */
+document.addEventListener("keydown", function (e) {
+  var k = e.key;
+  if (k === "ArrowLeft" || k === "a" || k === "A") { keys.left = true; e.preventDefault(); }
+  else if (k === "ArrowRight" || k === "d" || k === "D") { keys.right = true; e.preventDefault(); }
+  else if (k === " " || k === "Spacebar") {
+    if (game.state === "playing") keys.spray = true;
+    e.preventDefault();
+  } else if (k === "p" || k === "P") {
+    if (game.state === "playing") pauseGame();
+    else if (game.state === "paused") resumeGame();
+  }
+});
+document.addEventListener("keyup", function (e) {
+  var k = e.key;
+  if (k === "ArrowLeft" || k === "a" || k === "A") keys.left = false;
+  else if (k === "ArrowRight" || k === "d" || k === "D") keys.right = false;
+  else if (k === " " || k === "Spacebar") keys.spray = false;
+});
+/* Click / tap on the play field sprays. */
+canvas.addEventListener("pointerdown", function (e) {
+  if (game.state !== "playing") return;
+  e.preventDefault();
+  if (game.sprayCd <= 0) { doSpray(); game.sprayCd = 0.22; }
+});
+canvas.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+
+/* Hold-style touch buttons: press = on, release/leave = off. */
+function holdBtn(id, on, off) {
+  var b = el(id);
+  var down = function (e) { e.preventDefault(); on(); };
+  var up = function (e) { e.preventDefault(); off(); };
+  b.addEventListener("pointerdown", down);
+  b.addEventListener("pointerup", up);
+  b.addEventListener("pointercancel", up);
+  b.addEventListener("pointerleave", up);
+}
+holdBtn("tLeft", function () { keys.left = true; }, function () { keys.left = false; });
+holdBtn("tRight", function () { keys.right = true; }, function () { keys.right = false; });
+holdBtn("tSpray", function () { keys.spray = true; }, function () { keys.spray = false; });
+
+/* UI buttons */
+el("btnStart").addEventListener("click", startGame);
+el("btnHow").addEventListener("click", function () { howto.classList.add("on"); });
+el("btnHowClose").addEventListener("click", function () { sfx.click(); howto.classList.remove("on"); });
+el("btnPause").addEventListener("click", function () {
+  if (game.state === "playing") pauseGame(); else if (game.state === "paused") resumeGame();
+});
+el("btnResume").addEventListener("click", resumeGame);
+el("btnRestartP").addEventListener("click", function () { pauseScreen.classList.remove("on"); startGame(); });
+el("btnAgain").addEventListener("click", startGame);
+el("btnMute").addEventListener("click", function () {
+  audio.muted = !audio.muted;
+  if (!audio.muted) audio.init();      // unmuting is a user gesture → safe to init
+  el("btnMute").textContent = audio.muted ? "🔇" : "🔊";
+  el("btnMute").setAttribute("aria-label", audio.muted ? "Unmute sound" : "Mute sound");
+  sfx.click();
+});
+
+/* Auto-pause when the tab is hidden (also keeps timers honest). */
+document.addEventListener("visibilitychange", function () {
+  if (document.hidden && game.state === "playing") pauseGame();
+});
+
+window.addEventListener("resize", resize);
+window.addEventListener("orientationchange", function () { setTimeout(resize, 120); });
+
+/* ---------- Boot: size the canvas and paint the idle scene ---------- */
+resize();
+game.player.x = W / 2;
+drawFrame(0);
+</script>
+</body>
+</html>
